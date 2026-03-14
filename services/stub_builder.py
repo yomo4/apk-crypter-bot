@@ -116,10 +116,15 @@ class StubBuilder:
         
         subprocess.run(cmd, check=True)
         
-        # Добавляем DEX файл в APK используя zip
-        import zipfile
-        with zipfile.ZipFile(str(unsigned_apk), 'a', zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(str(dex_file), 'classes.dex')
+        # Добавляем DEX файл с полным путем
+        cmd = [
+            aapt_path,
+            "add",
+            str(unsigned_apk),
+            str(dex_file)
+        ]
+        
+        subprocess.run(cmd, check=True)
         
         return str(unsigned_apk)
     
