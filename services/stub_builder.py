@@ -202,7 +202,9 @@ class StubBuilder:
             "-F", str(unsigned_apk)
         ]
         
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"aapt package failed: {result.stderr}")
         
         # Добавляем DEX файл напрямую через zipfile
         with zipfile.ZipFile(str(unsigned_apk), 'a', compression=zipfile.ZIP_DEFLATED) as apk_zip:
