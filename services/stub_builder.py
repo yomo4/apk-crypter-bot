@@ -229,7 +229,9 @@ class StubBuilder:
             aligned_apk
         ]
         
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"zipalign failed: {result.stderr}")
         
         # Подписываем APK
         apksigner_path = f"{self.build_tools}/apksigner"
@@ -244,7 +246,20 @@ class StubBuilder:
             aligned_apk
         ]
         
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"apksigner sign failed: {result.stderr}")
+        
+        # Проверяем подпись
+        cmd = [
+            apksigner_path,
+            "verify",
+            signed_apk
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"APK signature verification failed: {result.stderr}")
         
         return signed_apk
     
