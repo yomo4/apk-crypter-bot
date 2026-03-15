@@ -103,16 +103,6 @@ class APKCrypter:
         output_apk = self.output_dir / f"{original_name}_crypted.apk"
         shutil.copy(stub_apk, output_apk)
         logger.info("Crypted APK ready: %s", output_apk)
-        
-        # Проверяем что payload.bin есть в APK
-        import zipfile
-        with zipfile.ZipFile(output_apk, 'r') as z:
-            files = z.namelist()
-            if 'assets/payload.bin' in files:
-                payload_info = z.getinfo('assets/payload.bin')
-                logger.info(f"✓ payload.bin найден в APK, размер: {payload_info.file_size} байт")
-            else:
-                logger.error(f"✗ payload.bin НЕ НАЙДЕН в APK! Файлы: {files}")
 
         return str(output_apk)
 
