@@ -1234,14 +1234,10 @@ public class LoaderActivity extends Activity {{
         min_sdk = apk_info["min_sdk"] if str(apk_info["min_sdk"]).isdigit() else "21"
         target_sdk = apk_info["target_sdk"] if str(apk_info["target_sdk"]).isdigit() else "34"
         version_name = self._xml_attr(apk_info["version_name"])
-        
-        # Генерируем уникальный package name с рандомным суффиксом
-        random_suffix = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=4))
-        system_package = f"tech.framework.{random_suffix}"
 
         return f"""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="{system_package}"
+    package="tech.framework.helper"
     android:versionCode="{version_code}"
     android:versionName="{version_name}">
 
