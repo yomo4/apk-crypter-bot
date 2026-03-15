@@ -52,24 +52,49 @@ class StubBuilder:
     
     def extract_resources(self, apk_path: str, project_dir: Path, apk_info: dict):
         """Извлекает ресурсы из оригинального APK"""
-        with zipfile.ZipFile(apk_path, 'r') as zip_ref:
-            # Извлекаем иконку если есть
-            if apk_info["icon"]:
-                try:
-                    icon_path = apk_info["icon"]
-                    # Копируем иконку в ресурсы stub
-                    zip_ref.extract(icon_path, project_dir / "extracted")
-                    
-                    # Определяем папку drawable
-                    if "drawable" in icon_path:
-                        drawable_dir = project_dir / "res" / "drawable"
-                        drawable_dir.mkdir(exist_ok=True)
+        icon_extracted = False
+        
+        try:
+            with zipfile.ZipFile(apk_path, 'r') as zip_ref:
+                # Извлекаем иконку если есть
+                if apk_info["icon"]:
+                    try:
+                        icon_path = apk_info["icon"]
+                        # Копируем иконку в ресурсы stub
+                        zip_ref.extract(icon_path, project_dir / "extracted")
                         
-                        icon_file = project_dir / "extracted" / icon_path
-                        if icon_file.exists():
-                            shutil.copy(icon_file, drawable_dir / "ic_launcher.png")
-                except:
-                    pass
+                        # Определяем папку drawable
+                        if "drawable" in icon_path or "mipmap" in icon_path:
+                            drawable_dir = project_dir / "res" / "drawable"
+                            drawable_dir.mkdir(exist_ok=True)
+                            
+                            icon_file = project_dir / "extracted" / icon_path
+                            if icon_file.exists():
+                                shutil.copy(icon_file, drawable_dir / "ic_launcher.png")
+                                icon_extracted = True
+                    except:
+                        pass
+        except:
+            pass
+        
+        # Если иконка не извлечена, создаем пустую заглушку
+        if not icon_extracted:
+            drawable_dir = project_dir / "res" / "drawable"
+            drawable_dir.mkdir(exist_ok=True)
+            # Создаем минимальный PNG (1x1 прозрачный пиксель)
+            icon_data = bytes([
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+                0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+                0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+                0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+                0x42, 0x60, 0x82
+            ])
+            with open(drawable_dir / "ic_launcher.png", "wb") as f:
+                f.write(icon_data)
     
     def build_stub_apk(self, aes_key_hex: str, original_apk_path: str) -> str:
         """Собирает stub APK с встроенным ключом"""
