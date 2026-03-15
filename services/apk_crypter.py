@@ -35,8 +35,8 @@ class APKCrypter:
         # Шифруем оригинальный APK
         encrypted_data = self.encrypt_apk(apk_path)
         
-        # Собираем stub APK через Android SDK
-        stub_apk = self.stub_builder.build_stub_apk(self.aes_key.hex())
+        # Собираем stub APK через Android SDK с информацией из оригинального APK
+        stub_apk = self.stub_builder.build_stub_apk(self.aes_key.hex(), apk_path)
         
         # Добавляем зашифрованный payload в stub
         output_apk = self.output_dir / f"{original_name}_crypted.apk"
