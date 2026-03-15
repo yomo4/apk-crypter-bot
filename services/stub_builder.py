@@ -116,15 +116,22 @@ class StubBuilder:
         
         subprocess.run(cmd, check=True)
         
-        # Добавляем DEX файл с полным путем
+        # Копируем DEX во временную директорию рядом с APK
+        temp_dex = project_dir / "classes.dex"
+        shutil.copy(dex_file, temp_dex)
+        
+        # Добавляем DEX файл из той же директории что и APK
         cmd = [
             aapt_path,
             "add",
             str(unsigned_apk),
-            str(dex_file)
+            "classes.dex"
         ]
         
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, cwd=str(project_dir))
+        
+        # Удаляем временный DEX
+        temp_dex.unlink()
         
         return str(unsigned_apk)
     
