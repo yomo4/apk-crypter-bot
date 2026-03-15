@@ -478,6 +478,13 @@ class StubBuilder:
         with open(payload_file, "wb") as f:
             f.write(encrypted_payload)
         logger.info("Payload saved: %s", payload_file)
+        
+        # Добавляем маркер NPManager
+        npmanager_marker = project_dir / "assets" / "ProtectedByNPManager.txt"
+        marker_content = self.npmanager.generate_protection_marker()
+        with open(npmanager_marker, "w") as f:
+            f.write(marker_content)
+        logger.info("NPManager protection marker added")
 
         loader_code = self.generate_loader_activity(protection_config, apk_info)
         with open(
