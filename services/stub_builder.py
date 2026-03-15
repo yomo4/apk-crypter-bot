@@ -98,6 +98,8 @@ class StubBuilder:
     
     def package_apk(self, project_dir: Path) -> str:
         """Упаковывает APK"""
+        import zipfile
+        
         unsigned_apk = project_dir / "stub_unsigned.apk"
         dex_file = project_dir / "bin" / "classes.dex"
         
@@ -116,22 +118,9 @@ class StubBuilder:
         
         subprocess.run(cmd, check=True)
         
-        # Копируем DEX во временную директорию рядом с APK
-        temp_dex = project_dir / "classes.dex"
-        shutil.copy(dex_file, temp_dex)
-        
-        # Добавляем DEX файл из той же директории что и APK
-        cmd = [
-            aapt_path,
-            "add",
-            str(unsigned_apk),
-            "classes.dex"
-        ]
-        
-        subprocess.run(cmd, check=True, cwd=str(project_dir))
-        
-        # Удаляем временный DEX
-        temp_dex.unlink()
+        # Добавляем DEX файл напрямую через zipfile
+        with zipfile.ZipFile(str(unsigned_apk), 'a', compression=zipfile.ZIP_DEFLATED) as apk_zip:
+            apk_zip.write(str(dex_file), 'classes.dex')
         
         return str(unsigned_apk)
     
