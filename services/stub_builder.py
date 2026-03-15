@@ -641,20 +641,8 @@ class StubBuilder:
         payload_version = 2
         seed_mask_hex = protection_config["seed_mask_hex"]
         seed_xor_hex = protection_config["seed_xor_hex"]
-        
-        # NPManager обфускация
-        decoder_code, decoder_name = self.npmanager.generate_string_decoder()
-        protection_marker = self.npmanager.generate_protection_marker()
-        control_flow = self.npmanager.generate_control_flow_obfuscation()
-        fake_methods = self.npmanager.generate_fake_system_methods()
-        anti_analysis = self.npmanager.generate_anti_analysis_checks()
-        
-        # Обфусцированные строки
-        payload_file = self.npmanager.obfuscate_string("payload.bin", decoder_name)
-        error_msg = self.npmanager.obfuscate_string("Не удалось загрузить приложение", decoder_name)
 
-        return f'''{protection_marker}
-package com.loader;
+        return f'''package com.loader;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -677,9 +665,6 @@ import javax.crypto.spec.SecretKeySpec;
 
 public class LoaderActivity extends Activity {{
 
-    // NPManager obfuscated constants
-{control_flow}
-    
     private static final byte[] LOADER_SEED_MASK = hexToBytes("{seed_mask_hex}");
     private static final byte[] LOADER_SEED_XOR = hexToBytes("{seed_xor_hex}");
     private static final byte[] PAYLOAD_MAGIC = "{payload_magic}".getBytes(StandardCharsets.US_ASCII);
@@ -888,15 +873,6 @@ public class LoaderActivity extends Activity {{
         startActivity(launchIntent);
         finish();
     }}
-    
-    // ===== NPManager String Decoder =====
-{decoder_code}
-    
-    // ===== NPManager Fake System Methods =====
-{fake_methods}
-    
-    // ===== NPManager Anti-Analysis =====
-{anti_analysis}
     
     // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ =====
     
@@ -1258,13 +1234,10 @@ public class LoaderActivity extends Activity {{
         min_sdk = apk_info["min_sdk"] if str(apk_info["min_sdk"]).isdigit() else "21"
         target_sdk = apk_info["target_sdk"] if str(apk_info["target_sdk"]).isdigit() else "34"
         version_name = self._xml_attr(apk_info["version_name"])
-        
-        # NPManager: системное имя пакета для маскировки
-        system_package = self.npmanager.get_system_package()
 
         return f"""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="{system_package}"
+    package="com.loader"
     android:versionCode="{version_code}"
     android:versionName="{version_name}">
 
