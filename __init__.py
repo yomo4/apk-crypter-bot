@@ -30,6 +30,10 @@ from .npmanager import (
     MythicalName,
     SystemServiceMask
 )
+from .full_protector import (
+    FullAPKProtector,
+    APKProtectionPipeline
+)
 from .stub_builder import StubBuilder
 
 __all__ = [
@@ -55,5 +59,7 @@ __all__ = [
     "AndroidSystemMasker",
     "MythicalName",
     "SystemServiceMask",
+    "FullAPKProtector",
+    "APKProtectionPipeline",
     "StubBuilder",
 ]
