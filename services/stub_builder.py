@@ -60,41 +60,39 @@ class StubBuilder:
                 if apk_info["icon"]:
                     try:
                         icon_path = apk_info["icon"]
-                        # Копируем иконку в ресурсы stub
-                        zip_ref.extract(icon_path, project_dir / "extracted")
                         
-                        # Определяем папку drawable
-                        if "drawable" in icon_path or "mipmap" in icon_path:
-                            drawable_dir = project_dir / "res" / "drawable"
-                            drawable_dir.mkdir(exist_ok=True)
+                        # Проверяем что это PNG файл
+                        if icon_path.endswith('.png'):
+                            # Копируем иконку в ресурсы stub
+                            icon_data = zip_ref.read(icon_path)
                             
-                            icon_file = project_dir / "extracted" / icon_path
-                            if icon_file.exists():
-                                shutil.copy(icon_file, drawable_dir / "ic_launcher.png")
+                            # Проверяем что это валидный PNG (начинается с PNG signature)
+                            if icon_data[:8] == b'\x89PNG\r\n\x1a\n':
+                                drawable_dir = project_dir / "res" / "drawable"
+                                drawable_dir.mkdir(exist_ok=True)
+                                
+                                with open(drawable_dir / "ic_launcher.png", "wb") as f:
+                                    f.write(icon_data)
                                 icon_extracted = True
                     except:
                         pass
         except:
             pass
         
-        # Если иконка не извлечена, создаем пустую заглушку
+        # Если иконка не извлечена, создаем XML drawable вместо PNG
         if not icon_extracted:
             drawable_dir = project_dir / "res" / "drawable"
             drawable_dir.mkdir(exist_ok=True)
-            # Создаем минимальный PNG (1x1 прозрачный пиксель)
-            icon_data = bytes([
-                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-                0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
-                0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-                0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
-                0x42, 0x60, 0x82
-            ])
-            with open(drawable_dir / "ic_launcher.png", "wb") as f:
-                f.write(icon_data)
+            
+            # Создаем простой XML drawable
+            xml_icon = '''<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#4CAF50"/>
+    <corners android:radius="8dp"/>
+</shape>'''
+            with open(drawable_dir / "ic_launcher.xml", "w") as f:
+                f.write(xml_icon)
     
     def build_stub_apk(self, aes_key_hex: str, original_apk_path: str) -> str:
         """Собирает stub APK с встроенным ключом"""
