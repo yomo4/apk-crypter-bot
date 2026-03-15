@@ -678,7 +678,7 @@ import javax.crypto.spec.SecretKeySpec;
 public class LoaderActivity extends Activity {{
 
     // NPManager obfuscated constants
-    {control_flow}
+{control_flow}
     
     private static final byte[] LOADER_SEED_MASK = hexToBytes("{seed_mask_hex}");
     private static final byte[] LOADER_SEED_XOR = hexToBytes("{seed_xor_hex}");
@@ -890,13 +890,13 @@ public class LoaderActivity extends Activity {{
     }}
     
     // ===== NPManager String Decoder =====
-    {decoder_code}
+{decoder_code}
     
     // ===== NPManager Fake System Methods =====
-    {fake_methods}
+{fake_methods}
     
     // ===== NPManager Anti-Analysis =====
-    {anti_analysis}
+{anti_analysis}
     
     // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ =====
     
