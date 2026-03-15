@@ -268,6 +268,10 @@ public class LoaderActivity extends Activity {{
     android:versionCode="1"
     android:versionName="1.0">
     
+    <uses-sdk
+        android:minSdkVersion="21"
+        android:targetSdkVersion="34"/>
+    
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     
