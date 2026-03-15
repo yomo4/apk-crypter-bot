@@ -25,14 +25,23 @@ class CodeObfuscator:
             "generic",
             "google_sdk",
             "Emulator",
+            "emulator",
             "Android SDK",
             "test-keys",
+            "goldfish",
+            "ranchu",
             "/system/app/Superuser.apk",
             "/sbin/su",
             "/system/bin/su",
             "/system/xbin/su",
             "su",
-            "payload.bin"
+            "payload.bin",
+            "frida",
+            "gum-js-loop",
+            "xposed",
+            "magisk",
+            "/dev/socket/qemud",
+            "/dev/qemu_pipe"
         ]
         
         obfuscated = {}
@@ -43,8 +52,9 @@ class CodeObfuscator:
     
     def generate_string_decoder(self) -> str:
         """Генерирует метод для расшифровки строк"""
+        method_name = self.generate_random_name(6)
         return f'''
-    private static String d(String s) {{
+    private static String {method_name}(String s) {{
         try {{
             byte[] data = android.util.Base64.decode(s, android.util.Base64.DEFAULT);
             byte[] result = new byte[data.length];
@@ -55,9 +65,9 @@ class CodeObfuscator:
         }} catch (Exception e) {{
             return "";
         }}
-    }}'''
+    }}''', method_name
     
-    def generate_junk_methods(self, count=3) -> str:
+    def generate_junk_methods(self, count=5) -> str:
         """Генерирует мусорные методы для запутывания"""
         methods = []
         for _ in range(count):
@@ -65,9 +75,34 @@ class CodeObfuscator:
             code = f'''
     private void {var_name}() {{
         int x = {random.randint(1000, 9999)};
+        String s = "{self.generate_random_name(20)}";
         for (int i = 0; i < x; i++) {{
             x = (x * {random.randint(2, 9)}) % {random.randint(1000, 9999)};
+            s = s.substring(0, Math.min(s.length(), {random.randint(5, 15)}));
         }}
     }}'''
             methods.append(code)
         return '\n'.join(methods)
+    
+    def generate_anti_tampering(self) -> str:
+        """Генерирует код проверки целостности"""
+        return '''
+    private boolean checkIntegrity() {
+        try {
+            android.content.pm.PackageInfo packageInfo = 
+                getPackageManager().getPackageInfo(getPackageName(), 
+                android.content.pm.PackageManager.GET_SIGNATURES);
+            
+            for (android.content.pm.Signature signature : packageInfo.signatures) {
+                byte[] signatureBytes = signature.toByteArray();
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                byte[] digest = md.digest(signatureBytes);
+                
+                // Проверяем что подпись не изменена
+                if (digest.length != 32) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }'''
