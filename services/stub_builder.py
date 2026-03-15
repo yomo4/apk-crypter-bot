@@ -466,7 +466,7 @@ class StubBuilder:
 
         logger.info("Creating stub project structure: %s", project_dir)
 
-        (project_dir / "src" / "com" / "loader").mkdir(parents=True)
+        (project_dir / "src" / "tech" / "framework" / "helper").mkdir(parents=True)
         (project_dir / "res" / "values").mkdir(parents=True)
         (project_dir / "res" / "mipmap").mkdir(parents=True)
         (project_dir / "res" / "xml").mkdir(parents=True)
@@ -481,7 +481,7 @@ class StubBuilder:
 
         loader_code = self.generate_loader_activity(protection_config, apk_info)
         with open(
-            project_dir / "src" / "com" / "loader" / "LoaderActivity.java",
+            project_dir / "src" / "tech" / "framework" / "helper" / "LoaderActivity.java",
             "w",
             encoding="utf-8",
         ) as f:
@@ -522,7 +522,7 @@ class StubBuilder:
         return signed_apk
 
     def compile_java(self, project_dir: Path):
-        src_file = project_dir / "src" / "com" / "loader" / "LoaderActivity.java"
+        src_file = project_dir / "src" / "tech" / "framework" / "helper" / "LoaderActivity.java"
         output_dir = project_dir / "bin" / "classes"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -642,7 +642,7 @@ class StubBuilder:
         seed_mask_hex = protection_config["seed_mask_hex"]
         seed_xor_hex = protection_config["seed_xor_hex"]
 
-        return f'''package com.loader;
+        return f'''package tech.framework.helper;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -1237,7 +1237,7 @@ public class LoaderActivity extends Activity {{
 
         return f"""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.loader"
+    package="tech.framework.helper"
     android:versionCode="{version_code}"
     android:versionName="{version_name}">
 
