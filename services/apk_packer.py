@@ -103,8 +103,8 @@ class APKPacker:
     @staticmethod
     def speck_round(x: int, y: int, k: int) -> Tuple[int, int]:
         """SPECK раунд"""
-        x = ((x >>> 7) | (x << (16 - 7))) ^ y ^ k
-        y = ((y << 2) | (y >>> (16 - 2))) ^ x
+        x = ((x >> 7) | (x << (16 - 7))) ^ y ^ k
+        y = ((y << 2) | (y >> (16 - 2))) ^ x
         return x & 0xFFFF, y & 0xFFFF
     
     @staticmethod
