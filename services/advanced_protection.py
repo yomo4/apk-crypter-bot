@@ -94,7 +94,7 @@ class AndroidEnvironmentDetector:
                     pass
 
         # Проверка свойств системы
-        system_props = Self._get_system_properties()
+        system_props = self._get_system_properties()
         suspicious_props = ["goldfish", "ranchu", "qemu"]
 
         for prop, value in system_props.items():
