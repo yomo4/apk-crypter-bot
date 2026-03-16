@@ -87,8 +87,9 @@ class APKPacker:
     def chacha20_encrypt(data: bytes, key: bytes, nonce: bytes) -> bytes:
         """ChaCha20-Poly1305 шифрование"""
         try:
-            cipher = ChaCha20_Poly1305(key)
-            return cipher.encrypt(nonce, data, None)
+            cipher = ChaCha20_Poly1305.new(key=key, nonce=nonce)
+            ciphertext, _ = cipher.encrypt_and_digest(data)
+            return ciphertext
         except Exception as e:
             logger.warning(f"ChaCha20 failed: {e}, using XOR fallback")
             return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
@@ -133,12 +134,12 @@ class APKPacker:
         # Layer 2: AES-256-CBC
         layer2 = self.aes_encrypt(layer1, k2, iv2)
         
-        # Layer 3: SPECK по 4 байта
-        layer3 = b""
+        # Layer 3: SPECK по 4 байта (join вместо += чтобы избежать O(n²))
+        blocks = []
         for i in range(0, len(layer2), 4):
             block = layer2[i:i+4].ljust(4, b"\x00")
-            enc_block = self.speck_encrypt_block(block, k3)
-            layer3 += enc_block
+            blocks.append(self.speck_encrypt_block(block, k3))
+        layer3 = b"".join(blocks)
         
         meta = {
             "c_k": base64.b64encode(k1).decode(),
